@@ -370,7 +370,7 @@ func TestDistributionAdminService_RefundWalletCalculatesFeeAndDeductsGrossAmount
 	require.InDelta(t, 100, out.Wallet.PrepaidBalance, 0.0001)
 }
 
-func TestDistributionAdminService_SettleCommissionConsumesReservedWalletBalance(t *testing.T) {
+func TestDistributionAdminService_SettleCommissionDelegatesWalletMutationToRepository(t *testing.T) {
 	walletRepo := &distributionAdminWalletRepoStub{
 		wallet: &DistributionWallet{ChannelOrgID: 88, OrganizationType: "reseller"},
 	}
@@ -397,12 +397,12 @@ func TestDistributionAdminService_SettleCommissionConsumesReservedWalletBalance(
 	require.NotNil(t, out)
 	require.Equal(t, int64(1001), settlementRepo.settleID)
 	require.Equal(t, "manual", settlementRepo.settleInput.SettlementMethod)
-	require.Len(t, walletRepo.settleReservedCalls, 1)
-	require.InDelta(t, 12.5, walletRepo.settleReservedCalls[0].amount, 0.0001)
+	require.Empty(t, walletRepo.settleReservedCalls)
 	require.Empty(t, walletRepo.releaseCalls)
+	require.Empty(t, walletRepo.deductCalls)
 }
 
-func TestDistributionAdminService_SettleCommissionReleasesReservedWalletBalanceForOfflineSettlement(t *testing.T) {
+func TestDistributionAdminService_SettleOfflineDelegatesWalletMutationToRepository(t *testing.T) {
 	walletRepo := &distributionAdminWalletRepoStub{
 		wallet: &DistributionWallet{ChannelOrgID: 88, OrganizationType: "reseller"},
 	}
@@ -427,9 +427,11 @@ func TestDistributionAdminService_SettleCommissionReleasesReservedWalletBalanceF
 	out, err := svc.SettleCommission(context.Background(), 1001, DistributionCommissionSettlementInput{SettlementMethod: "offline"})
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Len(t, walletRepo.releaseCalls, 1)
-	require.InDelta(t, 12.5, walletRepo.releaseCalls[0].amount, 0.0001)
+	require.Equal(t, int64(1001), settlementRepo.settleID)
+	require.Equal(t, "offline", settlementRepo.settleInput.SettlementMethod)
+	require.Empty(t, walletRepo.releaseCalls)
 	require.Empty(t, walletRepo.settleReservedCalls)
+	require.Empty(t, walletRepo.deductCalls)
 }
 
 func TestDistributionAdminService_SettleCommissionCreditsUserBalanceForBalanceSettlement(t *testing.T) {
@@ -464,7 +466,7 @@ func TestDistributionAdminService_SettleCommissionCreditsUserBalanceForBalanceSe
 	require.Zero(t, settlementRepo.settleID)
 }
 
-func TestDistributionAdminService_ReverseCommissionReleasesReservedWalletBalance(t *testing.T) {
+func TestDistributionAdminService_ReverseCommissionDelegatesWalletReleaseToRepository(t *testing.T) {
 	walletRepo := &distributionAdminWalletRepoStub{
 		wallet: &DistributionWallet{ChannelOrgID: 88, OrganizationType: "reseller"},
 	}
@@ -489,12 +491,12 @@ func TestDistributionAdminService_ReverseCommissionReleasesReservedWalletBalance
 	out, err := svc.ReverseCommission(context.Background(), 1001)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Len(t, walletRepo.releaseCalls, 1)
-	require.InDelta(t, 12.5, walletRepo.releaseCalls[0].amount, 0.0001)
+	require.Equal(t, int64(1001), settlementRepo.reverseID)
+	require.Empty(t, walletRepo.releaseCalls)
 	require.Empty(t, walletRepo.refundCalls)
 }
 
-func TestDistributionAdminService_ReverseCommissionRefundsSettledWalletBalance(t *testing.T) {
+func TestDistributionAdminService_ReverseSettledCommissionDelegatesWalletRefundToRepository(t *testing.T) {
 	walletRepo := &distributionAdminWalletRepoStub{
 		wallet: &DistributionWallet{ChannelOrgID: 88, OrganizationType: "reseller"},
 	}
@@ -519,8 +521,8 @@ func TestDistributionAdminService_ReverseCommissionRefundsSettledWalletBalance(t
 	out, err := svc.ReverseCommission(context.Background(), 1001)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Len(t, walletRepo.refundCalls, 1)
-	require.InDelta(t, 12.5, walletRepo.refundCalls[0].amount, 0.0001)
+	require.Equal(t, int64(1001), settlementRepo.reverseID)
+	require.Empty(t, walletRepo.refundCalls)
 	require.Empty(t, walletRepo.releaseCalls)
 }
 

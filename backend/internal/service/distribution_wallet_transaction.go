@@ -30,6 +30,7 @@ type DistributionWalletTransaction struct {
 	ReferenceNo              string    `json:"reference_no"`
 	Note                     string    `json:"note"`
 	OperatorUserID           *int64    `json:"operator_user_id,omitempty"`
+	CommissionID             *int64    `json:"commission_id,omitempty"`
 	CreatedAt                time.Time `json:"created_at"`
 }
 

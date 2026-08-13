@@ -182,6 +182,8 @@ func TestDistributionSchema_IsPresentAndConstrained(t *testing.T) {
 	requireConstraintDefinitionContains(t, tx, "channel_members", "channel_members_user_role_unique", "UNIQUE", "user_id", "channel_org_id", "role_type")
 	requireColumn(t, tx, "channel_wallet_transactions", "transaction_type", "character varying", 32, false)
 	requireColumn(t, tx, "channel_wallet_transactions", "billing_usage_entry_id", "bigint", 0, true)
+	requireColumn(t, tx, "channel_wallet_transactions", "commission_id", "bigint", 0, true)
+	requireForeignKeyOnDelete(t, tx, "channel_wallet_transactions", "commission_id", "commission_ledger", "RESTRICT")
 	requireColumn(t, tx, "commission_ledger", "billing_usage_entry_id", "bigint", 0, true)
 	requireColumn(t, tx, "commission_ledger", "dedup_key", "character varying", 160, false)
 	requireColumn(t, tx, "billing_usage_entries", "request_id", "character varying", 255, true)
@@ -189,6 +191,16 @@ func TestDistributionSchema_IsPresentAndConstrained(t *testing.T) {
 	requireIndex(t, tx, "channel_wallet_transactions", "idx_channel_wallet_transactions_channel_org_id")
 	requireIndex(t, tx, "channel_wallet_transactions", "idx_channel_wallet_transactions_type")
 	requireIndex(t, tx, "channel_wallet_transactions", "idx_channel_wallet_transactions_usage_event_type_unique")
+	requirePartialUniqueIndexDefinition(
+		t,
+		tx,
+		"channel_wallet_transactions",
+		"idx_channel_wallet_transactions_commission_action_unique",
+		"commission_id",
+		"transaction_type",
+		"WHERE",
+	)
+	requireIndex(t, tx, "channel_wallet_transactions", "idx_channel_wallet_transactions_commission_id")
 	requireIndex(t, tx, "commission_ledger", "idx_commission_ledger_usage_event_member_type_unique")
 	requireIndex(t, tx, "billing_usage_entries", "idx_billing_usage_entries_request_api_key_unique")
 }

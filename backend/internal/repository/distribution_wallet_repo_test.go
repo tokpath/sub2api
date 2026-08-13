@@ -177,14 +177,16 @@ func TestDistributionWalletRepositoryListTransactions_ReturnsLedger(t *testing.T
 			"reference_no",
 			"note",
 			"operator_user_id",
+			"commission_id",
 			"created_at",
-		}).AddRow(int64(1), int64(88), "Independent Agent", "reseller", "recharge", 120.0, 10.0, 130.0, 0.0, 0.0, "BANK-1", "confirmed", int64(9), createdAt))
+		}).AddRow(int64(1), int64(88), "Independent Agent", "reseller", "recharge", 120.0, 10.0, 130.0, 0.0, 0.0, "BANK-1", "confirmed", int64(9), nil, createdAt))
 
 	out, page, err := repo.ListTransactions(context.Background(), service.DistributionAdminListFilter{ChannelOrgID: 88, TransactionType: "recharge"}, pagination.PaginationParams{Page: 1, PageSize: 20})
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	require.Equal(t, "recharge", out[0].TransactionType)
 	require.NotNil(t, out[0].OperatorUserID)
+	require.Nil(t, out[0].CommissionID)
 	require.Equal(t, int64(1), page.Total)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

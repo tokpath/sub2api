@@ -1140,7 +1140,7 @@ function openSettleDialog(row?: DistributionCommission) {
 }
 
 function canSettleCommission(row: DistributionCommission | TableRow) {
-  return row.status !== 'settled' && row.status !== 'cancelled' && row.status !== 'reversed'
+  return row.status === 'available'
 }
 
 function toggleSelectAllVisibleCommissions(event: Event) {

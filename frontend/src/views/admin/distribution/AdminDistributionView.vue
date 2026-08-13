@@ -354,7 +354,7 @@
                   {{ t('admin.distribution.actions.adjustAttribution') }}
                 </button>
                 <button
-                  v-if="activeTab === 'commissions' && row.status !== 'settled'"
+                  v-if="activeTab === 'commissions' && row.status === 'available'"
                   type="button"
                   class="btn btn-primary btn-sm"
                   @click="openSettleDialog(row)"

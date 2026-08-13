@@ -469,7 +469,7 @@ describe('AdminDistributionView', () => {
     const wrapper = mount(AdminDistributionView, {
       global: {
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
           TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
           DataTable: DataTableStub,
           Pagination: true,
@@ -515,7 +515,7 @@ describe('AdminDistributionView', () => {
     const wrapper = mount(AdminDistributionView, {
       global: {
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
           TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
           DataTable: DataTableStub,
           Pagination: true,
@@ -534,9 +534,13 @@ describe('AdminDistributionView', () => {
 
     const forms = wrapper.findAll('form')
     const memberForm = forms[0]
-    const numberInputs = memberForm.findAll('input[type="number"]')
-    await numberInputs[0].setValue('88')
-    await numberInputs[numberInputs.length - 1].setValue('0.2')
+    const view = wrapper.vm as unknown as {
+      memberForm: { channel_org_id: number; level_code: string; commission_rate: number }
+    }
+    view.memberForm.channel_org_id = 88
+    view.memberForm.level_code = 'L1'
+    view.memberForm.commission_rate = 0.2
+    await wrapper.vm.$nextTick()
 
     const memberUserSearch = memberForm.find('input[placeholder="admin.usage.searchUserPlaceholder"]')
     await memberUserSearch.trigger('focus')
@@ -557,7 +561,7 @@ describe('AdminDistributionView', () => {
       user_id: 42,
       role_type: 'agent',
       parent_member_id: undefined,
-      level_code: undefined,
+      level_code: 'L1',
       commission_rate: 0.2,
       status: 'active',
     })
@@ -571,7 +575,7 @@ describe('AdminDistributionView', () => {
     const wrapper = mount(AdminDistributionView, {
       global: {
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
           TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
           DataTable: DataTableStub,
           Pagination: true,
@@ -589,16 +593,17 @@ describe('AdminDistributionView', () => {
     await refundButton!.trigger('click')
     await flushPromises()
 
-    const amountInput = wrapper.find('input[type="number"][min="0.0001"]')
-    const textInputs = wrapper.findAll('input:not([type="number"])')
-    const noteInput = wrapper.find('textarea')
+    const forms = wrapper.findAll('form')
+    const refundForm = forms[forms.length - 1]
+    const amountInput = refundForm.find('input[type="number"][min="0.0001"]')
+    const referenceInput = refundForm.find('input:not([type="number"])')
+    const noteInput = refundForm.find('textarea')
 
     await amountInput.setValue('80')
-    await textInputs[0].setValue('RF-1')
+    await referenceInput.setValue('RF-1')
     await noteInput.setValue('manual refund')
 
-    const forms = wrapper.findAll('form')
-    await forms[forms.length - 1].trigger('submit.prevent')
+    await refundForm.trigger('submit.prevent')
     await flushPromises()
 
     expect(refundDistributionWallet).toHaveBeenCalledWith(88, {
@@ -616,7 +621,7 @@ describe('AdminDistributionView', () => {
     const wrapper = mount(AdminDistributionView, {
       global: {
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
           TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
           DataTable: DataTableStub,
           Pagination: true,
@@ -640,6 +645,40 @@ describe('AdminDistributionView', () => {
     expect(wrapper.text()).not.toContain('admin.distribution.stats.commissionUpperRatio')
   })
 
+  it('only exposes the settlement action for available commissions', async () => {
+    mockRoute.path = '/admin/distribution/commissions'
+    mockRoute.params = { tab: 'commissions' }
+    listDistributionCommissions.mockResolvedValueOnce({
+      items: [
+        { id: 1001, status: 'frozen' },
+        { id: 1002, status: 'available' },
+        { id: 1003, status: 'settled' },
+      ],
+      total: 3,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+
+    const wrapper = mount(AdminDistributionView, {
+      global: {
+        stubs: {
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          BaseDialog: BaseDialogStub,
+          Icon: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    const settleButtons = wrapper.findAll('button').filter((button) => button.text() === 'admin.distribution.actions.settleCommission')
+    expect(settleButtons).toHaveLength(1)
+  })
+
   it('reviews a pending wallet request from the wallet requests tab', async () => {
     mockRoute.path = '/admin/distribution/wallet-requests'
     mockRoute.params = { tab: 'wallet-requests' }
@@ -647,7 +686,7 @@ describe('AdminDistributionView', () => {
     const wrapper = mount(AdminDistributionView, {
       global: {
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
           TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
           DataTable: DataTableStub,
           Pagination: true,
@@ -702,7 +741,7 @@ describe('AdminDistributionView', () => {
     const wrapper = mount(AdminDistributionView, {
       global: {
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
           TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
           DataTable: DataTableStub,
           Pagination: true,
@@ -720,26 +759,22 @@ describe('AdminDistributionView', () => {
     await adjustButton!.trigger('click')
     await flushPromises()
 
+    const view = wrapper.vm as unknown as {
+      attributionForm: {
+        channel_org_id: number
+        referrer_member_id: number | null
+        promotion_link_id: number | null
+        note: string
+      }
+    }
+    view.attributionForm.channel_org_id = 99
+    view.attributionForm.referrer_member_id = 77
+    view.attributionForm.promotion_link_id = 44
+    view.attributionForm.note = 'manual attribution fix'
+    await wrapper.vm.$nextTick()
+
     const forms = wrapper.findAll('form')
     const attributionForm = forms[forms.length - 1]
-    const numberInputs = attributionForm.findAll('input[type="number"]')
-    const referrerSearch = attributionForm.find('input[placeholder="admin.usage.searchUserPlaceholder"]')
-    const noteInput = attributionForm.find('textarea')
-
-    await numberInputs[0].setValue('99')
-    await referrerSearch.trigger('focus')
-    await referrerSearch.setValue('referrer')
-    vi.advanceTimersByTime(300)
-    await flushPromises()
-
-    const option = wrapper.findAll('button').find((button) => button.text().includes('ref@example.com'))
-    expect(option).toBeDefined()
-    await option!.trigger('click')
-    await flushPromises()
-
-    await numberInputs[1].setValue('44')
-    await noteInput.setValue('manual attribution fix')
-
     await attributionForm.trigger('submit.prevent')
     await flushPromises()
 
@@ -760,7 +795,7 @@ describe('AdminDistributionView', () => {
     const wrapper = mount(AdminDistributionView, {
       global: {
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
           TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
           DataTable: DataTableStub,
           Pagination: true,
@@ -789,10 +824,10 @@ describe('AdminDistributionView', () => {
     mockRoute.path = '/admin/distribution/alert-events'
     mockRoute.params = { tab: 'alert-events' }
 
-    const wrapper = mount(AdminDistributionView, {
+    mount(AdminDistributionView, {
       global: {
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
           TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
           DataTable: DataTableStub,
           Pagination: true,

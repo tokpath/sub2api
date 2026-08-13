@@ -372,9 +372,6 @@ func (s *DistributionAdminService) SettleCommission(ctx context.Context, commiss
 		return original, nil
 	}
 	method := normalizeDistributionSettlementMethod(input.SettlementMethod, original.SettlementMethod)
-	if err := s.applyWalletOnSettle(ctx, original, method); err != nil {
-		return nil, err
-	}
 	input.SettlementMethod = method
 	if requiresDistributionBalancePayout(method) {
 		return s.settlementRepo.SettleToBalance(ctx, commissionID, input)
@@ -393,67 +390,10 @@ func (s *DistributionAdminService) ReverseCommission(ctx context.Context, commis
 	if original == nil {
 		return nil, ErrInvalidDistributionCommission
 	}
-	if err := s.applyWalletOnReverse(ctx, original); err != nil {
-		return nil, err
-	}
 	if strings.EqualFold(strings.TrimSpace(original.Status), "settled") && requiresDistributionBalancePayout(original.SettlementMethod) {
 		return s.settlementRepo.ReverseBalanceSettlement(ctx, commissionID)
 	}
 	return s.settlementRepo.Reverse(ctx, commissionID)
-}
-
-func (s *DistributionAdminService) applyWalletOnSettle(ctx context.Context, original *DistributionCommissionLedger, settlementMethod string) error {
-	if !s.shouldAdjustWallet(ctx, original) || original == nil || original.Amount <= 0 {
-		return nil
-	}
-	wasReserved := requiresDistributionWalletReserve(original.SettlementMethod)
-	needsDeduction := requiresDistributionWalletReserve(settlementMethod)
-
-	switch {
-	case wasReserved && needsDeduction:
-		_, err := s.walletRepo.SettleReservedCommission(ctx, original.ChannelOrgID, original.Amount)
-		return err
-	case wasReserved && !needsDeduction:
-		_, err := s.walletRepo.ReleaseCommission(ctx, original.ChannelOrgID, original.Amount)
-		return err
-	case !wasReserved && needsDeduction:
-		_, err := s.walletRepo.DeductCommission(ctx, original.ChannelOrgID, original.Amount)
-		return err
-	default:
-		return nil
-	}
-}
-
-func (s *DistributionAdminService) applyWalletOnReverse(ctx context.Context, original *DistributionCommissionLedger) error {
-	if !s.shouldAdjustWallet(ctx, original) || original == nil || original.Amount <= 0 {
-		return nil
-	}
-	switch {
-	case strings.EqualFold(strings.TrimSpace(original.Status), "settled") && requiresDistributionWalletReserve(original.SettlementMethod):
-		_, err := s.walletRepo.RefundCommission(ctx, original.ChannelOrgID, original.Amount)
-		return err
-	case requiresDistributionWalletReserve(original.SettlementMethod):
-		_, err := s.walletRepo.ReleaseCommission(ctx, original.ChannelOrgID, original.Amount)
-		return err
-	default:
-		return nil
-	}
-}
-
-func (s *DistributionAdminService) shouldAdjustWallet(ctx context.Context, ledger *DistributionCommissionLedger) bool {
-	if s == nil || s.walletRepo == nil || ledger == nil || ledger.ChannelOrgID <= 0 {
-		return false
-	}
-	wallet, err := s.walletRepo.GetByChannelOrgID(ctx, ledger.ChannelOrgID)
-	if err != nil || wallet == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(wallet.OrganizationType)) {
-	case "reseller", "oem":
-		return true
-	default:
-		return false
-	}
 }
 
 func normalizeDistributionSettlementMethod(candidate string, fallback string) string {

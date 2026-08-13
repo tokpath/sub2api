@@ -14,7 +14,15 @@ import (
 )
 
 var (
-	ErrInvalidDistributionCommission = infraerrors.BadRequest("INVALID_DISTRIBUTION_COMMISSION", "invalid distribution commission")
+	ErrInvalidDistributionCommission      = infraerrors.BadRequest("INVALID_DISTRIBUTION_COMMISSION", "invalid distribution commission")
+	ErrDistributionCommissionNotAvailable = infraerrors.Conflict(
+		"DISTRIBUTION_COMMISSION_NOT_AVAILABLE",
+		"distribution commission is not available for settlement",
+	)
+	ErrDistributionCommissionNotReversible = infraerrors.Conflict(
+		"DISTRIBUTION_COMMISSION_NOT_REVERSIBLE",
+		"distribution commission cannot be reversed from its current state",
+	)
 )
 
 type DistributionCommissionLedger struct {

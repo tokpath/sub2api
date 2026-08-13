@@ -150,6 +150,7 @@ export interface DistributionWalletTransaction {
   reference_no: string
   note: string
   operator_user_id?: number | null
+  commission_id?: number | null
   created_at: string
 }
 
