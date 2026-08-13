@@ -18,6 +18,7 @@ const {
   createDistributionMember,
   createDistributionOrganization,
   createDistributionPromotionLink,
+  getDistributionReconciliationSummary,
   getDistributionStats,
   listDistributionAttributions,
   listDistributionAttributionAudits,
@@ -26,6 +27,8 @@ const {
   listDistributionMembers,
   listDistributionOrganizations,
   listDistributionPromotionLinks,
+  listDistributionReconciliationIssueActions,
+  listDistributionReconciliationIssues,
   listDistributionWalletRequests,
   listDistributionWalletTransactions,
   listDistributionWallets,
@@ -33,6 +36,8 @@ const {
   reviewDistributionWalletRequest,
   refundDistributionWallet,
   reverseDistributionCommission,
+  resolveDistributionReconciliationIssue,
+  runDistributionReconciliation,
   settleDistributionCommission,
   updateDistributionAttribution,
   updateDistributionOrganization,
@@ -41,6 +46,7 @@ const {
   createDistributionMember: vi.fn(),
   createDistributionOrganization: vi.fn(),
   createDistributionPromotionLink: vi.fn(),
+  getDistributionReconciliationSummary: vi.fn(),
   getDistributionStats: vi.fn(),
   listDistributionAttributions: vi.fn(),
   listDistributionAttributionAudits: vi.fn(),
@@ -49,6 +55,8 @@ const {
   listDistributionMembers: vi.fn(),
   listDistributionOrganizations: vi.fn(),
   listDistributionPromotionLinks: vi.fn(),
+  listDistributionReconciliationIssueActions: vi.fn(),
+  listDistributionReconciliationIssues: vi.fn(),
   listDistributionWalletRequests: vi.fn(),
   listDistributionWalletTransactions: vi.fn(),
   listDistributionWallets: vi.fn(),
@@ -56,6 +64,8 @@ const {
   reviewDistributionWalletRequest: vi.fn(),
   refundDistributionWallet: vi.fn(),
   reverseDistributionCommission: vi.fn(),
+  resolveDistributionReconciliationIssue: vi.fn(),
+  runDistributionReconciliation: vi.fn(),
   settleDistributionCommission: vi.fn(),
   updateDistributionAttribution: vi.fn(),
   updateDistributionOrganization: vi.fn(),
@@ -73,6 +83,7 @@ vi.mock('@/api/admin/distribution', () => ({
   createDistributionMember,
   createDistributionOrganization,
   createDistributionPromotionLink,
+  getDistributionReconciliationSummary,
   getDistributionStats,
   listDistributionAttributions,
   listDistributionAttributionAudits,
@@ -81,6 +92,8 @@ vi.mock('@/api/admin/distribution', () => ({
   listDistributionMembers,
   listDistributionOrganizations,
   listDistributionPromotionLinks,
+  listDistributionReconciliationIssueActions,
+  listDistributionReconciliationIssues,
   listDistributionWalletRequests,
   listDistributionWalletTransactions,
   listDistributionWallets,
@@ -88,6 +101,8 @@ vi.mock('@/api/admin/distribution', () => ({
   reviewDistributionWalletRequest,
   refundDistributionWallet,
   reverseDistributionCommission,
+  resolveDistributionReconciliationIssue,
+  runDistributionReconciliation,
   settleDistributionCommission,
   updateDistributionAttribution,
   updateDistributionOrganization,
@@ -96,6 +111,7 @@ vi.mock('@/api/admin/distribution', () => ({
     createDistributionMember,
     createDistributionOrganization,
     createDistributionPromotionLink,
+    getDistributionReconciliationSummary,
     getDistributionStats,
     listDistributionAttributions,
     listDistributionAttributionAudits,
@@ -104,6 +120,8 @@ vi.mock('@/api/admin/distribution', () => ({
     listDistributionMembers,
     listDistributionOrganizations,
     listDistributionPromotionLinks,
+    listDistributionReconciliationIssueActions,
+    listDistributionReconciliationIssues,
     listDistributionWalletRequests,
     listDistributionWalletTransactions,
     listDistributionWallets,
@@ -111,6 +129,8 @@ vi.mock('@/api/admin/distribution', () => ({
     reviewDistributionWalletRequest,
     refundDistributionWallet,
     reverseDistributionCommission,
+    resolveDistributionReconciliationIssue,
+    runDistributionReconciliation,
     settleDistributionCommission,
     updateDistributionAttribution,
     updateDistributionOrganization,
@@ -120,6 +140,7 @@ vi.mock('@/api/admin/distribution', () => ({
     createDistributionMember,
     createDistributionOrganization,
     createDistributionPromotionLink,
+    getDistributionReconciliationSummary,
     getDistributionStats,
     listDistributionAttributions,
     listDistributionAttributionAudits,
@@ -127,6 +148,8 @@ vi.mock('@/api/admin/distribution', () => ({
     listDistributionMembers,
     listDistributionOrganizations,
     listDistributionPromotionLinks,
+    listDistributionReconciliationIssueActions,
+    listDistributionReconciliationIssues,
     listDistributionWalletRequests,
     listDistributionWalletTransactions,
     listDistributionWallets,
@@ -134,6 +157,8 @@ vi.mock('@/api/admin/distribution', () => ({
     reviewDistributionWalletRequest,
     refundDistributionWallet,
     reverseDistributionCommission,
+    resolveDistributionReconciliationIssue,
+    runDistributionReconciliation,
     settleDistributionCommission,
     updateDistributionAttribution,
     updateDistributionOrganization,
@@ -209,6 +234,7 @@ describe('AdminDistributionView', () => {
     createDistributionMember.mockReset()
     createDistributionOrganization.mockReset()
     createDistributionPromotionLink.mockReset()
+    getDistributionReconciliationSummary.mockReset()
     getDistributionStats.mockReset()
     listDistributionAttributions.mockReset()
     listDistributionAttributionAudits.mockReset()
@@ -217,6 +243,8 @@ describe('AdminDistributionView', () => {
     listDistributionMembers.mockReset()
     listDistributionOrganizations.mockReset()
     listDistributionPromotionLinks.mockReset()
+    listDistributionReconciliationIssueActions.mockReset()
+    listDistributionReconciliationIssues.mockReset()
     listDistributionWalletRequests.mockReset()
     listDistributionWalletTransactions.mockReset()
     listDistributionWallets.mockReset()
@@ -224,6 +252,8 @@ describe('AdminDistributionView', () => {
     reviewDistributionWalletRequest.mockReset()
     refundDistributionWallet.mockReset()
     reverseDistributionCommission.mockReset()
+    resolveDistributionReconciliationIssue.mockReset()
+    runDistributionReconciliation.mockReset()
     settleDistributionCommission.mockReset()
     updateDistributionAttribution.mockReset()
     updateDistributionOrganization.mockReset()
@@ -249,6 +279,33 @@ describe('AdminDistributionView', () => {
       frozen_commission_amount: 0,
       available_commission_amount: 0,
       settled_commission_amount: 0,
+    })
+    getDistributionReconciliationSummary.mockResolvedValue({
+      latest_run: null,
+      open_count: 0,
+      critical_count: 0,
+      warning_count: 0,
+      ignored_count: 0,
+      resolved_count: 0,
+      repairable_count: 0,
+    })
+    listDistributionReconciliationIssueActions.mockResolvedValue([])
+    listDistributionReconciliationIssues.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    runDistributionReconciliation.mockResolvedValue({
+      id: 1,
+      trigger_type: 'manual',
+      status: 'completed',
+      issue_count: 0,
+      resolved_count: 0,
+      error_message: '',
+      started_at: '2026-05-24T00:00:00Z',
+      completed_at: '2026-05-24T00:00:01Z',
     })
     listDistributionOrganizations.mockResolvedValue({
       items: [],
@@ -850,5 +907,133 @@ describe('AdminDistributionView', () => {
       role_type: undefined,
       transaction_type: undefined,
     })
+  })
+
+  it('runs financial reconciliation from the reconciliation route and refreshes the result', async () => {
+    mockRoute.path = '/admin/distribution/reconciliation'
+    mockRoute.params = { tab: 'reconciliation' }
+    getDistributionReconciliationSummary.mockResolvedValue({
+      latest_run: null,
+      open_count: 2,
+      critical_count: 1,
+      warning_count: 1,
+      ignored_count: 0,
+      resolved_count: 3,
+      repairable_count: 1,
+    })
+    runDistributionReconciliation.mockResolvedValue({
+      id: 42,
+      trigger_type: 'manual',
+      status: 'completed',
+      issue_count: 2,
+      resolved_count: 1,
+      error_message: '',
+      started_at: '2026-05-24T00:00:00Z',
+      completed_at: '2026-05-24T00:00:01Z',
+    })
+
+    const wrapper = mount(AdminDistributionView, {
+      global: {
+        stubs: {
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          BaseDialog: BaseDialogStub,
+          Icon: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(listDistributionReconciliationIssues).toHaveBeenCalledTimes(1)
+    expect(getDistributionReconciliationSummary).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('admin.distribution.reconciliation.openIssues')
+
+    const runButton = wrapper.findAll('button').find((button) => button.text() === 'admin.distribution.actions.runReconciliation')
+    expect(runButton).toBeDefined()
+    await runButton!.trigger('click')
+    await flushPromises()
+
+    expect(runDistributionReconciliation).toHaveBeenCalledTimes(1)
+    expect(listDistributionReconciliationIssues).toHaveBeenCalledTimes(2)
+    expect(getDistributionReconciliationSummary).toHaveBeenCalledTimes(2)
+    expect(showSuccess).toHaveBeenCalledWith('admin.distribution.messages.reconciliationCompleted')
+  })
+
+  it('repairs a reconciliation issue and loads its action history', async () => {
+    mockRoute.path = '/admin/distribution/reconciliation'
+    mockRoute.params = { tab: 'reconciliation' }
+    const issue = {
+      id: 501,
+      fingerprint: 'wallet-total-consumed:88',
+      issue_type: 'wallet_total_consumed_mismatch',
+      severity: 'warning',
+      status: 'open',
+      channel_org_id: 88,
+      organization_name: 'Independent Agent',
+      billing_usage_entry_id: null,
+      commission_id: null,
+      expected_amount: 10,
+      actual_amount: 5,
+      details: { transaction_count: 1 },
+      occurrence_count: 1,
+      repairable: true,
+      last_detected_run_id: 42,
+      resolution_action: '',
+      resolution_note: '',
+      resolved_by_user_id: null,
+      first_detected_at: '2026-05-24T00:00:00Z',
+      last_detected_at: '2026-05-24T00:00:00Z',
+      resolved_at: null,
+      created_at: '2026-05-24T00:00:00Z',
+      updated_at: '2026-05-24T00:00:00Z',
+    }
+    listDistributionReconciliationIssues.mockResolvedValue({
+      items: [issue],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    resolveDistributionReconciliationIssue.mockResolvedValue({ ...issue, status: 'resolved' })
+
+    const wrapper = mount(AdminDistributionView, {
+      global: {
+        stubs: {
+          AdminDistributionLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          BaseDialog: BaseDialogStub,
+          Icon: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    const handleButton = wrapper.findAll('button').find((button) => button.text() === 'admin.distribution.actions.handleReconciliationIssue')
+    expect(handleButton).toBeDefined()
+    await handleButton!.trigger('click')
+    await flushPromises()
+
+    expect(listDistributionReconciliationIssueActions).toHaveBeenCalledWith(501)
+    const view = wrapper.vm as unknown as {
+      reconciliationForm: { action: 'repair' | 'dismiss' | 'reopen' | 'recheck'; note: string }
+    }
+    view.reconciliationForm.action = 'repair'
+    view.reconciliationForm.note = 'recalculate wallet aggregate'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(resolveDistributionReconciliationIssue).toHaveBeenCalledWith(501, {
+      action: 'repair',
+      note: 'recalculate wallet aggregate',
+    })
+    expect(showSuccess).toHaveBeenCalledWith('admin.distribution.messages.reconciliationIssueUpdated')
+    expect(listDistributionReconciliationIssues).toHaveBeenCalledTimes(2)
   })
 })

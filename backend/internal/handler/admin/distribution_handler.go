@@ -175,6 +175,11 @@ type settleDistributionCommissionRequest struct {
 	SettlementNote        string `json:"settlement_note" binding:"max=2000"`
 }
 
+type resolveDistributionReconciliationIssueRequest struct {
+	Action string `json:"action" binding:"required,oneof=repair dismiss reopen recheck"`
+	Note   string `json:"note" binding:"max=2000"`
+}
+
 func (h *DistributionHandler) ListMembers(c *gin.Context) {
 	if h == nil || h.adminService == nil {
 		response.ErrorFrom(c, service.ErrServiceUnavailable)
@@ -553,6 +558,106 @@ func (h *DistributionHandler) ReverseCommission(c *gin.Context) {
 	response.Success(c, ledger)
 }
 
+func (h *DistributionHandler) ListReconciliationIssues(c *gin.Context) {
+	if h == nil || h.adminService == nil {
+		response.ErrorFrom(c, service.ErrServiceUnavailable)
+		return
+	}
+	page, pageSize := response.ParsePagination(c)
+	items, total, err := h.adminService.ListReconciliationIssues(
+		c.Request.Context(),
+		parseDistributionReconciliationFilter(c),
+		pagination.PaginationParams{Page: page, PageSize: pageSize},
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	paginated(c, items, total, page, pageSize)
+}
+
+func (h *DistributionHandler) GetReconciliationSummary(c *gin.Context) {
+	if h == nil || h.adminService == nil {
+		response.ErrorFrom(c, service.ErrServiceUnavailable)
+		return
+	}
+	summary, err := h.adminService.GetReconciliationSummary(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, summary)
+}
+
+func (h *DistributionHandler) ListReconciliationIssueActions(c *gin.Context) {
+	if h == nil || h.adminService == nil {
+		response.ErrorFrom(c, service.ErrServiceUnavailable)
+		return
+	}
+	issueID, err := strconv.ParseInt(c.Param("issue_id"), 10, 64)
+	if err != nil || issueID <= 0 {
+		response.ErrorFrom(c, service.ErrInvalidDistributionReconciliation)
+		return
+	}
+	items, err := h.adminService.ListReconciliationIssueActions(c.Request.Context(), issueID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, items)
+}
+
+func (h *DistributionHandler) RunReconciliation(c *gin.Context) {
+	if h == nil || h.adminService == nil {
+		response.ErrorFrom(c, service.ErrServiceUnavailable)
+		return
+	}
+	var operatorUserID *int64
+	if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		operatorUserID = &subject.UserID
+	}
+	run, err := h.adminService.RunReconciliation(c.Request.Context(), service.DistributionReconciliationRunInput{
+		TriggerType:     "manual",
+		StartedByUserID: operatorUserID,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, run)
+}
+
+func (h *DistributionHandler) ResolveReconciliationIssue(c *gin.Context) {
+	if h == nil || h.adminService == nil {
+		response.ErrorFrom(c, service.ErrServiceUnavailable)
+		return
+	}
+	issueID, err := strconv.ParseInt(c.Param("issue_id"), 10, 64)
+	if err != nil || issueID <= 0 {
+		response.ErrorFrom(c, service.ErrInvalidDistributionReconciliation)
+		return
+	}
+	var req resolveDistributionReconciliationIssueRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ErrorFrom(c, service.ErrInvalidDistributionReconciliation)
+		return
+	}
+	var operatorUserID *int64
+	if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		operatorUserID = &subject.UserID
+	}
+	issue, err := h.adminService.ResolveReconciliationIssue(c.Request.Context(), issueID, service.DistributionReconciliationResolutionInput{
+		Action:         req.Action,
+		Note:           req.Note,
+		OperatorUserID: operatorUserID,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, issue)
+}
+
 func (h *DistributionHandler) ListPromotionLinks(c *gin.Context) {
 	if h == nil || h.promotionService == nil {
 		response.ErrorFrom(c, service.ErrServiceUnavailable)
@@ -640,6 +745,21 @@ func parseDistributionAlertEventFilter(c *gin.Context) service.DistributionAlert
 	return service.DistributionAlertEventListFilter{
 		ChannelOrgID: channelOrgID,
 		AlertType:    c.Query("alert_type"),
+		Severity:     c.Query("severity"),
+		Status:       c.Query("status"),
+	}
+}
+
+func parseDistributionReconciliationFilter(c *gin.Context) service.DistributionReconciliationFilter {
+	var channelOrgID int64
+	if raw := c.Query("channel_org_id"); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			channelOrgID = parsed
+		}
+	}
+	return service.DistributionReconciliationFilter{
+		ChannelOrgID: channelOrgID,
+		IssueType:    c.Query("issue_type"),
 		Severity:     c.Query("severity"),
 		Status:       c.Query("status"),
 	}

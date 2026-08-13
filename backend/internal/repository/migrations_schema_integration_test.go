@@ -171,6 +171,9 @@ func TestDistributionSchema_IsPresentAndConstrained(t *testing.T) {
 		"commission_ledger",
 		"channel_wallets",
 		"channel_wallet_transactions",
+		"distribution_reconciliation_runs",
+		"distribution_reconciliation_issues",
+		"distribution_reconciliation_issue_actions",
 	} {
 		var regclass sql.NullString
 		require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass($1)", "public."+table).Scan(&regclass))
@@ -203,6 +206,12 @@ func TestDistributionSchema_IsPresentAndConstrained(t *testing.T) {
 	requireIndex(t, tx, "channel_wallet_transactions", "idx_channel_wallet_transactions_commission_id")
 	requireIndex(t, tx, "commission_ledger", "idx_commission_ledger_usage_event_member_type_unique")
 	requireIndex(t, tx, "billing_usage_entries", "idx_billing_usage_entries_request_api_key_unique")
+	requireColumn(t, tx, "distribution_reconciliation_issues", "fingerprint", "character varying", 200, false)
+	requireColumn(t, tx, "distribution_reconciliation_issues", "details", "jsonb", 0, false)
+	requireColumn(t, tx, "distribution_reconciliation_issues", "last_detected_run_id", "bigint", 0, true)
+	requireForeignKeyOnDelete(t, tx, "distribution_reconciliation_issue_actions", "issue_id", "distribution_reconciliation_issues", "RESTRICT")
+	requireIndex(t, tx, "distribution_reconciliation_issues", "idx_distribution_reconciliation_issues_fingerprint")
+	requireIndex(t, tx, "distribution_reconciliation_issue_actions", "idx_distribution_reconciliation_issue_actions_issue")
 }
 
 func requireIndex(t *testing.T, tx *sql.Tx, table, index string) {

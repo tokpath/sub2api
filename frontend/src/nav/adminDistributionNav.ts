@@ -73,6 +73,7 @@ export function buildAdminDistributionNavItems(t: TranslateFn, icons: AdminDistr
         { path: '/admin/distribution/wallet-requests', label: t('admin.distribution.tabs.walletRequests'), icon: OrderIcon },
         { path: '/admin/distribution/wallet-transactions', label: t('admin.distribution.tabs.walletTransactions'), icon: OrderListIcon },
         { path: '/admin/distribution/commissions', label: t('admin.distribution.tabs.commissions'), icon: ChartIcon },
+        { path: '/admin/distribution/reconciliation', label: t('admin.distribution.tabs.reconciliation'), icon: BellIcon },
       ],
     },
     {

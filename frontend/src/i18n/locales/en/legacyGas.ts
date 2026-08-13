@@ -352,7 +352,8 @@ export default {
         "alertEvents": "Alert Events",
         "walletRequests": "Recharge / Refund Requests",
         "attributions": "Attributed Users",
-        "commissions": "Commissions"
+        "commissions": "Commissions",
+        "reconciliation": "Reconciliation"
       },
       "globalSettings": {
         "title": "Global Settings",
@@ -391,7 +392,10 @@ export default {
         "rechargeWallet": "Confirm Recharge",
         "refundWallet": "Confirm Refund",
         "settleCommission": "Settle Commission",
-        "reverseCommission": "Reverse Commission"
+        "reverseCommission": "Reverse Commission",
+        "runReconciliation": "Run Reconciliation",
+        "reconciliationRunning": "Reconciling…",
+        "handleReconciliationIssue": "Handle"
       },
       "filters": {
         "channelOrgId": "Channel organization",
@@ -400,6 +404,8 @@ export default {
         "allAlertTypes": "All alert types",
         "allAlertStatuses": "All alert statuses",
         "allSeverities": "All severities",
+        "allReconciliationTypes": "All difference types",
+        "allReconciliationStatuses": "All handling statuses",
         "allRequestTypes": "All request types",
         "allRequestStatuses": "All request statuses"
       },
@@ -412,6 +418,7 @@ export default {
         "rechargeTitle": "Confirm Prepaid Recharge",
         "refundTitle": "Confirm Prepaid Refund",
         "settleTitle": "Settle Commission",
+        "reconciliationTitle": "Handle Financial Difference",
         "attributionTitle": "Adjust Attribution",
         "attributionAuditTitle": "Attribution Audit"
       },
@@ -445,6 +452,8 @@ export default {
         "refundAmount": "Refund Amount",
         "referenceNo": "Reference No.",
         "note": "Note",
+        "resolutionAction": "Resolution Action",
+        "resolutionNote": "Resolution Note",
         "refundHint": "This is a mock refund bookkeeping flow only. No external refund provider is called, and fees are calculated from the channel refund fee rate.",
         "settlementMethod": "Settlement Method",
         "commissionSettlementMethod": "Default Settlement Method",
@@ -531,7 +540,12 @@ export default {
         "createdAt": "Created At",
         "triggeredAt": "Triggered At",
         "resolvedAt": "Resolved At",
-        "lastObservedAt": "Last Observed At"
+        "lastObservedAt": "Last Observed At",
+        "issueType": "Difference Type",
+        "expectedAmount": "Expected",
+        "actualAmount": "Actual",
+        "occurrenceCount": "Occurrences",
+        "lastDetectedAt": "Last Detected"
       },
       "targetTypes": {
         "registration": "Registration",
@@ -587,12 +601,17 @@ export default {
         "attributionUpdated": "Attribution updated",
         "noAttributionAudits": "No attribution audit records yet",
         "commissionSettled": "Commission settled",
-        "commissionReversed": "Commission reversed"
+        "commissionReversed": "Commission reversed",
+        "reconciliationCompleted": "Reconciliation completed: {issues} found, {resolved} closed",
+        "reconciliationIssueUpdated": "Financial difference updated",
+        "noReconciliationIssueActions": "No handling history yet"
       },
       "errors": {
         "loadFailed": "Failed to load distribution data",
         "createFailed": "Failed to create distribution record",
         "updateFailed": "Failed to update distribution record",
+        "reconciliationFailed": "Failed to run financial reconciliation",
+        "reconciliationResolutionFailed": "Failed to handle financial difference",
         "levelsFormatError": "Invalid channel distribution levels JSON.",
         "levelsValidationError": "Please fix channel agent level settings before saving."
       },
@@ -620,6 +639,45 @@ export default {
         "balanceExhausted": "Available balance is {available}; new API consumption has been paused. {note}",
         "consumptionWarning": "Remaining capacity {remaining}, total limit {limit}. {note}",
         "consumptionExhausted": "Current consumption {consumed} has reached the limit of {limit}. {note}"
+      },
+      "reconciliation": {
+        "openIssues": "Open Differences",
+        "criticalIssues": "Critical Differences",
+        "repairableIssues": "Safely Repairable",
+        "latestRun": "Latest Run",
+        "latestRunResult": "{issues} found, {resolved} closed",
+        "run": "Run",
+        "actionHistory": "Handling History",
+        "repairHint": "Only cumulative consumption is rebuilt from immutable wallet transactions. Prepaid balances and commissions are never guessed.",
+        "issueTypes": {
+          "usage_wallet_transaction_missing": "Usage wallet transaction missing",
+          "usage_wallet_amount_mismatch": "Usage charge amount mismatch",
+          "usage_commission_reserve_mismatch": "Usage commission reserve mismatch",
+          "usage_commission_ledger_mismatch": "Usage commission ledger mismatch",
+          "wallet_state_mismatch": "Wallet differs from latest transaction",
+          "wallet_commission_reserved_mismatch": "Reserved commission differs from open ledger",
+          "wallet_total_consumed_mismatch": "Consumed total differs from ledger",
+          "commission_wallet_action_missing": "Commission settlement wallet action missing",
+          "commission_reversal_wallet_action_missing": "Commission reversal wallet action missing",
+          "commission_balance_audit_missing": "Commission balance credit audit missing",
+          "commission_reversal_balance_audit_missing": "Commission reversal balance audit missing"
+        },
+        "statuses": {
+          "open": "Open",
+          "resolved": "Resolved",
+          "ignored": "Ignored"
+        },
+        "runStatuses": {
+          "running": "Running",
+          "completed": "Completed",
+          "failed": "Failed"
+        },
+        "actions": {
+          "repair": "Repair from Ledger",
+          "dismiss": "Dismiss with Audit",
+          "reopen": "Reopen",
+          "recheck": "Recheck"
+        }
       },
       "requestStatuses": {
         "pending": "Pending Review",

@@ -616,6 +616,9 @@ func ProvideDistributionAdminService(
 	svc.SetWalletTransactionRepository(walletTransactionRepo)
 	svc.SetWalletRequestRepository(walletRequestRepo)
 	svc.SetAlertEventRepository(alertEventRepo)
+	if reconciliationRepo, ok := walletRepo.(DistributionReconciliationRepository); ok {
+		svc.SetReconciliationRepository(reconciliationRepo)
+	}
 	return svc
 }
 
@@ -640,6 +643,7 @@ func ProvideDistributionAutoSettlementService(
 	adminService *DistributionAdminService,
 ) *DistributionAutoSettlementService {
 	svc := NewDistributionAutoSettlementService(repo, adminService, time.Minute)
+	svc.SetReconciliationExecutor(adminService, 10*time.Minute)
 	svc.Start()
 	return svc
 }

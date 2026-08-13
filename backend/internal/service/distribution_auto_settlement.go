@@ -12,6 +12,7 @@ import (
 const (
 	distributionAutoSettlementDefaultBatchSize   = 100
 	distributionAutoSettlementDefaultTaskTimeout = 30 * time.Second
+	distributionReconciliationDefaultTaskTimeout = 2 * time.Minute
 )
 
 type DistributionAutoSettlementRepository interface {
@@ -28,6 +29,11 @@ type DistributionAutoSettlementService struct {
 	interval    time.Duration
 	batchSize   int
 	taskTimeout time.Duration
+	reconciler  DistributionReconciliationExecutor
+
+	reconciliationInterval time.Duration
+	reconciliationTimeout  time.Duration
+	lastReconciliationAt   time.Time
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -41,13 +47,22 @@ func NewDistributionAutoSettlementService(
 	interval time.Duration,
 ) *DistributionAutoSettlementService {
 	return &DistributionAutoSettlementService{
-		repo:        repo,
-		executor:    executor,
-		interval:    interval,
-		batchSize:   distributionAutoSettlementDefaultBatchSize,
-		taskTimeout: distributionAutoSettlementDefaultTaskTimeout,
-		stopCh:      make(chan struct{}),
+		repo:                  repo,
+		executor:              executor,
+		interval:              interval,
+		batchSize:             distributionAutoSettlementDefaultBatchSize,
+		taskTimeout:           distributionAutoSettlementDefaultTaskTimeout,
+		reconciliationTimeout: distributionReconciliationDefaultTaskTimeout,
+		stopCh:                make(chan struct{}),
 	}
+}
+
+func (s *DistributionAutoSettlementService) SetReconciliationExecutor(executor DistributionReconciliationExecutor, interval time.Duration) {
+	if s == nil {
+		return
+	}
+	s.reconciler = executor
+	s.reconciliationInterval = interval
 }
 
 func (s *DistributionAutoSettlementService) Start() {
@@ -90,6 +105,7 @@ func (s *DistributionAutoSettlementService) runOnce() {
 		return
 	}
 	defer atomic.StoreInt32(&s.running, 0)
+	defer s.runReconciliationIfDue()
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.taskTimeout)
 	defer cancel()
@@ -106,5 +122,21 @@ func (s *DistributionAutoSettlementService) runOnce() {
 		if _, err := s.executor.SettleCommission(ctx, commissionID, DistributionCommissionSettlementInput{SettlementMethod: "auto"}); err != nil {
 			logger.LegacyPrintf("service.distribution_auto_settlement", "[DistributionAutoSettlement] settle commission failed: commission_id=%d err=%v", commissionID, err)
 		}
+	}
+}
+
+func (s *DistributionAutoSettlementService) runReconciliationIfDue() {
+	if s == nil || s.reconciler == nil || s.reconciliationInterval <= 0 {
+		return
+	}
+	now := time.Now()
+	if !s.lastReconciliationAt.IsZero() && now.Sub(s.lastReconciliationAt) < s.reconciliationInterval {
+		return
+	}
+	s.lastReconciliationAt = now
+	ctx, cancel := context.WithTimeout(context.Background(), s.reconciliationTimeout)
+	defer cancel()
+	if _, err := s.reconciler.RunReconciliation(ctx, DistributionReconciliationRunInput{TriggerType: "scheduled"}); err != nil {
+		logger.LegacyPrintf("service.distribution_reconciliation", "[DistributionReconciliation] scheduled run failed: %v", err)
 	}
 }

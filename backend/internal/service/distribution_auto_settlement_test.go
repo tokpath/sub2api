@@ -29,6 +29,15 @@ type distributionAutoSettlementExecutorStub struct {
 	errs   map[int64]error
 }
 
+type distributionScheduledReconciliationStub struct {
+	inputs []DistributionReconciliationRunInput
+}
+
+func (s *distributionScheduledReconciliationStub) RunReconciliation(_ context.Context, input DistributionReconciliationRunInput) (*DistributionReconciliationRun, error) {
+	s.inputs = append(s.inputs, input)
+	return &DistributionReconciliationRun{ID: int64(len(s.inputs)), Status: "completed"}, nil
+}
+
 func (s *distributionAutoSettlementExecutorStub) SettleCommission(ctx context.Context, commissionID int64, input DistributionCommissionSettlementInput) (*DistributionCommissionLedger, error) {
 	s.ids = append(s.ids, commissionID)
 	s.inputs = append(s.inputs, input)
@@ -66,4 +75,18 @@ func TestDistributionAutoSettlementServiceRunOnce_ContinuesAfterSingleSettlement
 
 	require.Equal(t, []int64{21, 22, 23}, executor.ids)
 	require.Len(t, executor.inputs, 3)
+}
+
+func TestDistributionAutoSettlementServiceRunOnce_RunsScheduledReconciliationWhenDue(t *testing.T) {
+	repo := &distributionAutoSettlementRepoStub{}
+	executor := &distributionAutoSettlementExecutorStub{}
+	reconciler := &distributionScheduledReconciliationStub{}
+	svc := NewDistributionAutoSettlementService(repo, executor, time.Minute)
+	svc.SetReconciliationExecutor(reconciler, time.Hour)
+
+	svc.runOnce()
+	svc.runOnce()
+
+	require.Len(t, reconciler.inputs, 1)
+	require.Equal(t, "scheduled", reconciler.inputs[0].TriggerType)
 }

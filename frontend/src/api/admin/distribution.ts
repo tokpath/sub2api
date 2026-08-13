@@ -202,6 +202,69 @@ export interface DistributionWalletRefundResult {
   processed_mock: boolean
 }
 
+export type DistributionReconciliationStatus = 'open' | 'resolved' | 'ignored'
+export type DistributionReconciliationSeverity = 'critical' | 'warning' | 'info'
+
+export interface DistributionReconciliationRun {
+  id: number
+  trigger_type: 'manual' | 'scheduled' | string
+  status: 'running' | 'completed' | 'failed' | string
+  issue_count: number
+  resolved_count: number
+  error_message: string
+  started_by_user_id?: number | null
+  started_at: string
+  completed_at?: string | null
+}
+
+export interface DistributionReconciliationIssue {
+  id: number
+  fingerprint: string
+  issue_type: string
+  severity: DistributionReconciliationSeverity | string
+  status: DistributionReconciliationStatus | string
+  channel_org_id?: number | null
+  organization_name: string
+  billing_usage_entry_id?: number | null
+  commission_id?: number | null
+  expected_amount: number
+  actual_amount: number
+  details: Record<string, unknown>
+  occurrence_count: number
+  repairable: boolean
+  last_detected_run_id?: number | null
+  resolution_action: string
+  resolution_note: string
+  resolved_by_user_id?: number | null
+  first_detected_at: string
+  last_detected_at: string
+  resolved_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DistributionReconciliationIssueAction {
+  id: number
+  issue_id: number
+  run_id?: number | null
+  action: 'repair' | 'dismiss' | 'reopen' | 'recheck' | string
+  previous_status: DistributionReconciliationStatus | string
+  new_status: DistributionReconciliationStatus | string
+  note: string
+  operator_user_id?: number | null
+  created_at: string
+}
+
+export interface DistributionReconciliationSummary {
+  latest_run?: DistributionReconciliationRun | null
+  open_count: number
+  critical_count: number
+  warning_count: number
+  ignored_count: number
+  resolved_count: number
+  repairable_count: number
+}
+
 export interface DistributionAdminStats {
   organization_count: number
   platform_count: number
@@ -250,6 +313,7 @@ export interface DistributionListParams {
   transaction_type?: string
   request_type?: string
   alert_type?: string
+  issue_type?: string
   severity?: string
   status?: string
   q?: string
@@ -293,6 +357,7 @@ export type DistributionWalletsResponse = BasePaginationResponse<DistributionWal
 export type DistributionAlertEventsResponse = BasePaginationResponse<DistributionAlertEvent>
 export type DistributionWalletRequestsResponse = BasePaginationResponse<DistributionWalletRequest>
 export type DistributionWalletTransactionsResponse = BasePaginationResponse<DistributionWalletTransaction>
+export type DistributionReconciliationIssuesResponse = BasePaginationResponse<DistributionReconciliationIssue>
 
 function cleanParams(params: DistributionListParams = {}) {
   return Object.fromEntries(
@@ -426,6 +491,34 @@ export async function reverseDistributionCommission(commissionId: number): Promi
   return data
 }
 
+export async function listDistributionReconciliationIssues(params: DistributionListParams = {}): Promise<DistributionReconciliationIssuesResponse> {
+  const { data } = await apiClient.get<DistributionReconciliationIssuesResponse>('/admin/distribution/reconciliation/issues', { params: cleanParams(params) })
+  return data
+}
+
+export async function getDistributionReconciliationSummary(): Promise<DistributionReconciliationSummary> {
+  const { data } = await apiClient.get<DistributionReconciliationSummary>('/admin/distribution/reconciliation/summary')
+  return data
+}
+
+export async function listDistributionReconciliationIssueActions(issueId: number): Promise<DistributionReconciliationIssueAction[]> {
+  const { data } = await apiClient.get<DistributionReconciliationIssueAction[]>(`/admin/distribution/reconciliation/issues/${issueId}/actions`)
+  return data
+}
+
+export async function runDistributionReconciliation(): Promise<DistributionReconciliationRun> {
+  const { data } = await apiClient.post<DistributionReconciliationRun>('/admin/distribution/reconciliation/run')
+  return data
+}
+
+export async function resolveDistributionReconciliationIssue(issueId: number, payload: {
+  action: 'repair' | 'dismiss' | 'reopen' | 'recheck'
+  note?: string
+}): Promise<DistributionReconciliationIssue> {
+  const { data } = await apiClient.post<DistributionReconciliationIssue>(`/admin/distribution/reconciliation/issues/${issueId}/resolve`, payload)
+  return data
+}
+
 export const adminDistributionAPI = {
   listDistributionOrganizations,
   createDistributionOrganization,
@@ -445,6 +538,11 @@ export const adminDistributionAPI = {
   getDistributionStats,
   settleDistributionCommission,
   reverseDistributionCommission,
+  listDistributionReconciliationIssues,
+  listDistributionReconciliationIssueActions,
+  getDistributionReconciliationSummary,
+  runDistributionReconciliation,
+  resolveDistributionReconciliationIssue,
   listDistributionAttributions,
   listDistributionAttributionAudits,
   updateDistributionAttribution,

@@ -745,7 +745,7 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
-    path: '/admin/distribution/:tab(organizations|members|promotion-links|wallets|alert-events|wallet-requests|wallet-transactions|attributions|commissions)',
+    path: '/admin/distribution/:tab(organizations|members|promotion-links|wallets|alert-events|wallet-requests|wallet-transactions|attributions|commissions|reconciliation)',
     name: 'AdminDistribution',
     component: () => import('@/views/admin/distribution/AdminDistributionView.vue'),
     meta: {

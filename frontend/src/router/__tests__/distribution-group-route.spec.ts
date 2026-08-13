@@ -75,4 +75,13 @@ describe('distribution group routes', () => {
       expect(route?.redirect).toBe(target)
     }
   })
+
+  it('recognizes the financial reconciliation admin route', async () => {
+    const { default: router } = await import('@/router')
+
+    const route = router.resolve('/admin/distribution/reconciliation')
+
+    expect(route.name).toBe('AdminDistribution')
+    expect(route.params.tab).toBe('reconciliation')
+  })
 })

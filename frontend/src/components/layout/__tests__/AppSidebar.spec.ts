@@ -107,6 +107,7 @@ describe('distribution navigation builders', () => {
     expect(adminDistributionNavSource).toContain("path: '/admin/distribution/promotion-links'")
     expect(adminDistributionNavSource).toContain("path: '/admin/distribution/wallets'")
     expect(adminDistributionNavSource).toContain("path: '/admin/distribution/alert-events'")
+    expect(adminDistributionNavSource).toContain("path: '/admin/distribution/reconciliation'")
     expect(adminDistributionNavSource).not.toContain("path: '/admin/distribution/group/risk-alerts'")
   })
 })

@@ -92,6 +92,7 @@ type DistributionAdminService struct {
 	walletTransactionRepo DistributionWalletTransactionListRepository
 	statsRepo             DistributionStatsAdminRepository
 	settlementRepo        DistributionCommissionSettlementRepository
+	reconciliationRepo    DistributionReconciliationRepository
 }
 
 func NewDistributionAdminService(

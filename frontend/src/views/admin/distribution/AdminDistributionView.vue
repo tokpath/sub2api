@@ -22,6 +22,44 @@
             <Icon name="plus" size="md" />
             {{ t('admin.distribution.actions.createPromotionLink') }}
           </button>
+          <button
+            v-if="activeTab === 'reconciliation'"
+            type="button"
+            class="btn btn-primary btn-md"
+            :disabled="reconciliationRunning"
+            @click="runReconciliationNow"
+          >
+            <Icon name="refresh" size="md" :class="reconciliationRunning ? 'animate-spin' : ''" />
+            {{ reconciliationRunning ? t('admin.distribution.actions.reconciliationRunning') : t('admin.distribution.actions.runReconciliation') }}
+          </button>
+        </div>
+      </div>
+
+      <div v-if="activeTab === 'reconciliation'" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="card p-4">
+          <div class="text-sm text-gray-500 dark:text-dark-400">{{ t('admin.distribution.reconciliation.openIssues') }}</div>
+          <div class="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">{{ reconciliationSummary.open_count }}</div>
+        </div>
+        <div class="card p-4">
+          <div class="text-sm text-gray-500 dark:text-dark-400">{{ t('admin.distribution.reconciliation.criticalIssues') }}</div>
+          <div class="mt-1 text-2xl font-semibold text-red-600 dark:text-red-400">{{ reconciliationSummary.critical_count }}</div>
+        </div>
+        <div class="card p-4">
+          <div class="text-sm text-gray-500 dark:text-dark-400">{{ t('admin.distribution.reconciliation.repairableIssues') }}</div>
+          <div class="mt-1 text-2xl font-semibold text-amber-600 dark:text-amber-400">{{ reconciliationSummary.repairable_count }}</div>
+        </div>
+        <div class="card p-4">
+          <div class="text-sm text-gray-500 dark:text-dark-400">{{ t('admin.distribution.reconciliation.latestRun') }}</div>
+          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
+            {{ reconciliationSummary.latest_run ? formatDateTime(reconciliationSummary.latest_run.completed_at || reconciliationSummary.latest_run.started_at) : '-' }}
+          </div>
+          <div v-if="reconciliationSummary.latest_run" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+            {{ reconciliationRunStatusLabel(reconciliationSummary.latest_run.status) }}
+            · {{ t('admin.distribution.reconciliation.latestRunResult', { issues: reconciliationSummary.latest_run.issue_count, resolved: reconciliationSummary.latest_run.resolved_count }) }}
+          </div>
+          <div v-if="reconciliationSummary.latest_run?.error_message" class="mt-1 line-clamp-2 text-xs text-red-600 dark:text-red-400">
+            {{ reconciliationSummary.latest_run.error_message }}
+          </div>
         </div>
       </div>
 
@@ -162,6 +200,33 @@
               <option v-for="item in alertSeverityOptions" :key="item" :value="item">{{ alertSeverityLabel(item) }}</option>
             </select>
             <select
+              v-if="activeTab === 'reconciliation'"
+              v-model="filters.reconciliation_type"
+              class="input w-full sm:w-64"
+              @change="reloadFromFirstPage"
+            >
+              <option value="">{{ t('admin.distribution.filters.allReconciliationTypes') }}</option>
+              <option v-for="item in reconciliationTypeOptions" :key="item" :value="item">{{ reconciliationTypeLabel(item) }}</option>
+            </select>
+            <select
+              v-if="activeTab === 'reconciliation'"
+              v-model="filters.reconciliation_status"
+              class="input w-full sm:w-44"
+              @change="reloadFromFirstPage"
+            >
+              <option value="">{{ t('admin.distribution.filters.allReconciliationStatuses') }}</option>
+              <option v-for="item in reconciliationStatusOptions" :key="item" :value="item">{{ reconciliationStatusLabel(item) }}</option>
+            </select>
+            <select
+              v-if="activeTab === 'reconciliation'"
+              v-model="filters.reconciliation_severity"
+              class="input w-full sm:w-44"
+              @change="reloadFromFirstPage"
+            >
+              <option value="">{{ t('admin.distribution.filters.allSeverities') }}</option>
+              <option v-for="item in reconciliationSeverityOptions" :key="item" :value="item">{{ alertSeverityLabel(item) }}</option>
+            </select>
+            <select
               v-if="activeTab === 'wallet-transactions'"
               v-model="filters.transaction_type"
               class="input w-full sm:w-52"
@@ -266,11 +331,26 @@
             <template #cell-alert_type="{ row }">
               <StatusPill :label="alertTypeLabel(row.alert_type)" tone="blue" />
             </template>
+            <template #cell-issue_type="{ row }">
+              <StatusPill :label="reconciliationTypeLabel(row.issue_type)" tone="blue" />
+            </template>
             <template #cell-severity="{ row }">
               <StatusPill :label="alertSeverityLabel(row.severity)" :tone="row.severity === 'critical' ? 'red' : row.severity === 'warning' ? 'amber' : 'gray'" />
             </template>
             <template #cell-details_summary="{ row }">
-              <div class="max-w-xl text-sm text-gray-700 dark:text-dark-300">{{ alertSummary(row) }}</div>
+              <div class="max-w-xl text-sm text-gray-700 dark:text-dark-300">{{ rowDetailsSummary(row) }}</div>
+            </template>
+            <template #cell-expected_amount="{ row }">
+              <span class="font-mono text-sm">${{ formatAmount(row.expected_amount) }}</span>
+            </template>
+            <template #cell-actual_amount="{ row }">
+              <span class="font-mono text-sm">${{ formatAmount(row.actual_amount) }}</span>
+            </template>
+            <template #cell-occurrence_count="{ row }">
+              <span class="font-mono text-sm">{{ row.occurrence_count }}</span>
+            </template>
+            <template #cell-last_detected_at="{ row }">
+              {{ formatDateTime(row.last_detected_at) }}
             </template>
             <template #cell-prepaid_balance_before="{ row }">
               ${{ formatAmount(row.prepaid_balance_before) }}
@@ -369,22 +449,30 @@
                 >
                   {{ t('admin.distribution.actions.reverseCommission') }}
                 </button>
+                <button
+                  v-if="activeTab === 'reconciliation'"
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  @click="openReconciliationDialog(row)"
+                >
+                  {{ t('admin.distribution.actions.handleReconciliationIssue') }}
+                </button>
               </div>
             </template>
-              <template #cell-created_at="{ row }">
-                {{ formatDateTime(row.created_at) }}
-              </template>
-              <template #cell-bound_at="{ row }">
-                {{ formatDateTime(row.bound_at) }}
-              </template>
-              <template #cell-code="{ row }">
-                <span class="font-mono text-sm">{{ row.code || '-' }}</span>
-              </template>
-              <template #cell-target_type="{ row }">
-                <StatusPill :label="targetTypeLabel(row.target_type)" tone="blue" />
-              </template>
-            </DataTable>
-          </template>
+            <template #cell-created_at="{ row }">
+              {{ formatDateTime(row.created_at) }}
+            </template>
+            <template #cell-bound_at="{ row }">
+              {{ formatDateTime(row.bound_at) }}
+            </template>
+            <template #cell-code="{ row }">
+              <span class="font-mono text-sm">{{ row.code || '-' }}</span>
+            </template>
+            <template #cell-target_type="{ row }">
+              <StatusPill :label="targetTypeLabel(row.target_type)" tone="blue" />
+            </template>
+          </DataTable>
+        </template>
 
         <template #pagination>
           <Pagination
@@ -898,6 +986,76 @@
       </form>
     </BaseDialog>
 
+    <BaseDialog :show="reconciliationDialog" :title="t('admin.distribution.dialogs.reconciliationTitle')" width="normal" @close="reconciliationDialog = false">
+      <form class="space-y-4" @submit.prevent="submitReconciliationResolution">
+        <div v-if="selectedReconciliationIssue" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800">
+          <div class="font-medium text-gray-900 dark:text-white">{{ reconciliationTypeLabel(selectedReconciliationIssue.issue_type) }}</div>
+          <div class="mt-2 grid grid-cols-2 gap-3 text-gray-600 dark:text-dark-300">
+            <div>{{ t('admin.distribution.columns.expectedAmount') }}: ${{ formatAmount(selectedReconciliationIssue.expected_amount) }}</div>
+            <div>{{ t('admin.distribution.columns.actualAmount') }}: ${{ formatAmount(selectedReconciliationIssue.actual_amount) }}</div>
+          </div>
+          <div class="mt-2 text-gray-600 dark:text-dark-300">{{ reconciliationDetailsSummary(selectedReconciliationIssue) }}</div>
+        </div>
+        <label class="block">
+          <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-dark-300">{{ t('admin.distribution.fields.resolutionAction') }}</span>
+          <select v-model="reconciliationForm.action" class="input w-full" required>
+            <option v-for="action in availableReconciliationActions" :key="action" :value="action">
+              {{ reconciliationActionLabel(action) }}
+            </option>
+          </select>
+        </label>
+        <label v-if="reconciliationForm.action === 'dismiss' || reconciliationForm.action === 'repair'" class="block">
+          <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-dark-300">{{ t('admin.distribution.fields.resolutionNote') }}</span>
+          <textarea
+            v-model="reconciliationForm.note"
+            class="input min-h-24 w-full"
+            :required="reconciliationForm.action === 'dismiss'"
+            maxlength="2000"
+          />
+        </label>
+        <p v-if="reconciliationForm.action === 'repair'" class="text-xs text-amber-600 dark:text-amber-400">
+          {{ t('admin.distribution.reconciliation.repairHint') }}
+        </p>
+        <div class="rounded-lg border border-gray-200 dark:border-dark-700">
+          <div class="flex items-center justify-between border-b border-gray-200 px-3 py-2 dark:border-dark-700">
+            <span class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.distribution.reconciliation.actionHistory') }}</span>
+            <button
+              type="button"
+              class="text-xs text-primary-600 hover:text-primary-700 disabled:opacity-50 dark:text-primary-400"
+              :disabled="loadingReconciliationIssueActions || !selectedReconciliationIssue"
+              @click="selectedReconciliationIssue && loadReconciliationIssueActions(selectedReconciliationIssue.id)"
+            >
+              {{ t('common.refresh') }}
+            </button>
+          </div>
+          <div v-if="loadingReconciliationIssueActions" class="px-3 py-4 text-sm text-gray-500 dark:text-dark-400">
+            {{ t('common.loading') }}
+          </div>
+          <div v-else-if="reconciliationIssueActions.length === 0" class="px-3 py-4 text-sm text-gray-500 dark:text-dark-400">
+            {{ t('admin.distribution.messages.noReconciliationIssueActions') }}
+          </div>
+          <ol v-else class="max-h-48 divide-y divide-gray-100 overflow-y-auto dark:divide-dark-800">
+            <li v-for="item in reconciliationIssueActions" :key="item.id" class="space-y-1 px-3 py-2 text-xs">
+              <div class="flex items-center justify-between gap-3">
+                <span class="font-medium text-gray-900 dark:text-white">{{ reconciliationActionLabel(item.action) }}</span>
+                <span class="text-gray-500 dark:text-dark-400">{{ formatDateTime(item.created_at) }}</span>
+              </div>
+              <div class="text-gray-600 dark:text-dark-300">
+                {{ reconciliationStatusLabel(item.previous_status) }} → {{ reconciliationStatusLabel(item.new_status) }}
+                · {{ t('admin.distribution.columns.operator') }} #{{ item.operator_user_id || '-' }}
+                <template v-if="item.run_id"> · {{ t('admin.distribution.reconciliation.run') }} #{{ item.run_id }}</template>
+              </div>
+              <div v-if="item.note" class="break-words text-gray-500 dark:text-dark-400">{{ item.note }}</div>
+            </li>
+          </ol>
+        </div>
+        <div class="flex justify-end gap-3">
+          <button type="button" class="btn btn-secondary" @click="reconciliationDialog = false">{{ t('common.cancel') }}</button>
+          <button type="submit" class="btn btn-primary" :disabled="saving">{{ t('common.confirm') }}</button>
+        </div>
+      </form>
+    </BaseDialog>
+
     <BaseDialog :show="attributionAuditDialog" :title="t('admin.distribution.dialogs.attributionAuditTitle')" width="extra-wide" @close="attributionAuditDialog = false">
       <div class="space-y-4">
         <div class="flex items-center justify-between gap-3">
@@ -981,6 +1139,7 @@ import {
   createDistributionMember,
   createDistributionOrganization,
   createDistributionPromotionLink,
+  getDistributionReconciliationSummary,
   listDistributionAttributions,
   listDistributionAttributionAudits,
   listDistributionAlertEvents,
@@ -988,6 +1147,8 @@ import {
   listDistributionMembers,
   listDistributionOrganizations,
   listDistributionPromotionLinks,
+  listDistributionReconciliationIssueActions,
+  listDistributionReconciliationIssues,
   listDistributionWalletRequests,
   listDistributionWalletTransactions,
   rechargeDistributionWallet,
@@ -995,6 +1156,8 @@ import {
   refundDistributionWallet,
   listDistributionWallets,
   reverseDistributionCommission,
+  resolveDistributionReconciliationIssue,
+  runDistributionReconciliation,
   settleDistributionCommission,
   updateDistributionAttribution,
   updateDistributionOrganization,
@@ -1014,11 +1177,15 @@ import {
   type DistributionListParams,
   type DistributionMemberRole,
   type DistributionOrganizationType,
+  type DistributionReconciliationIssue,
+  type DistributionReconciliationIssueAction,
+  type DistributionReconciliationSummary,
 } from '@/api/admin/distribution'
 
-type AdminDistributionTab = 'organizations' | 'members' | 'promotion-links' | 'wallets' | 'alert-events' | 'wallet-requests' | 'wallet-transactions' | 'attributions' | 'commissions'
+type AdminDistributionTab = 'organizations' | 'members' | 'promotion-links' | 'wallets' | 'alert-events' | 'wallet-requests' | 'wallet-transactions' | 'attributions' | 'commissions' | 'reconciliation'
 type TableRow = Record<string, any>
-const VALID_TABS: AdminDistributionTab[] = ['organizations', 'members', 'promotion-links', 'wallets', 'alert-events', 'wallet-requests', 'wallet-transactions', 'attributions', 'commissions']
+type ReconciliationAction = 'repair' | 'dismiss' | 'reopen' | 'recheck'
+const VALID_TABS: AdminDistributionTab[] = ['organizations', 'members', 'promotion-links', 'wallets', 'alert-events', 'wallet-requests', 'wallet-transactions', 'attributions', 'commissions', 'reconciliation']
 
 type LookupState<T> = {
   keyword: string
@@ -1067,22 +1234,36 @@ const route = useRoute()
 const appStore = useAppStore()
 const loading = ref(false)
 const saving = ref(false)
+const reconciliationRunning = ref(false)
 const rows = ref<TableRow[]>([])
-const totals = reactive({ organizations: 0, members: 0, promotionLinks: 0, wallets: 0, alertEvents: 0, walletRequests: 0, walletTransactions: 0, attributions: 0, commissions: 0 })
+const totals = reactive({ organizations: 0, members: 0, promotionLinks: 0, wallets: 0, alertEvents: 0, walletRequests: 0, walletTransactions: 0, attributions: 0, commissions: 0, reconciliation: 0 })
 const walletDialog = ref(false)
 const rechargeDialog = ref(false)
 const refundDialog = ref(false)
 const settleDialog = ref(false)
 const attributionDialog = ref(false)
 const attributionAuditDialog = ref(false)
+const reconciliationDialog = ref(false)
 const selectedWallet = ref<DistributionWallet | null>(null)
 const selectedCommission = ref<DistributionCommission | null>(null)
 const selectedAttribution = ref<DistributionAttribution | null>(null)
 const selectedAttributionAuditUser = ref<TableRow | null>(null)
 const attributionAudits = ref<DistributionAttributionAudit[]>([])
 const loadingAttributionAudits = ref(false)
+const selectedReconciliationIssue = ref<DistributionReconciliationIssue | null>(null)
+const reconciliationIssueActions = ref<DistributionReconciliationIssueAction[]>([])
+const loadingReconciliationIssueActions = ref(false)
+const reconciliationSummary = reactive<DistributionReconciliationSummary>({
+  latest_run: null,
+  open_count: 0,
+  critical_count: 0,
+  warning_count: 0,
+  ignored_count: 0,
+  resolved_count: 0,
+  repairable_count: 0,
+})
 const pagination = reactive({ page: 1, page_size: 20, total: 0 })
-const filters = reactive<{ channel_org_id?: number | null; user_id?: number | null; role_type: string; transaction_type: string; request_type: string; request_status: string; alert_type: string; alert_status: string; alert_severity: string }>({ channel_org_id: null, user_id: null, role_type: '', transaction_type: '', request_type: '', request_status: '', alert_type: '', alert_status: '', alert_severity: '' })
+const filters = reactive<{ channel_org_id?: number | null; user_id?: number | null; role_type: string; transaction_type: string; request_type: string; request_status: string; alert_type: string; alert_status: string; alert_severity: string; reconciliation_type: string; reconciliation_status: string; reconciliation_severity: string }>({ channel_org_id: null, user_id: null, role_type: '', transaction_type: '', request_type: '', request_status: '', alert_type: '', alert_status: '', alert_severity: '', reconciliation_type: '', reconciliation_status: '', reconciliation_severity: '' })
 const organizationDialog = ref(false)
 const memberDialog = ref(false)
 const linkDialog = ref(false)
@@ -1156,6 +1337,21 @@ const walletTransactionTypeOptions = ['recharge', 'refund', 'consume', 'commissi
 const alertTypeOptions = ['low_balance', 'balance_exhausted', 'consumption_warning', 'consumption_exhausted']
 const alertStatusOptions = ['active', 'resolved']
 const alertSeverityOptions = ['warning', 'critical']
+const reconciliationTypeOptions = [
+  'usage_wallet_transaction_missing',
+  'usage_wallet_amount_mismatch',
+  'usage_commission_reserve_mismatch',
+  'usage_commission_ledger_mismatch',
+  'wallet_state_mismatch',
+  'wallet_commission_reserved_mismatch',
+  'wallet_total_consumed_mismatch',
+  'commission_wallet_action_missing',
+  'commission_reversal_wallet_action_missing',
+  'commission_balance_audit_missing',
+  'commission_reversal_balance_audit_missing',
+]
+const reconciliationStatusOptions = ['open', 'ignored', 'resolved']
+const reconciliationSeverityOptions = ['critical', 'warning', 'info']
 const activeTab = computed<AdminDistributionTab>(() => {
   const tabParam = Array.isArray(route.params.tab) ? route.params.tab[0] : route.params.tab
   return VALID_TABS.includes(tabParam as AdminDistributionTab) ? (tabParam as AdminDistributionTab) : 'organizations'
@@ -1484,6 +1680,18 @@ const settleForm = reactive({
   settlement_method: 'manual' as 'balance' | 'auto' | 'manual' | 'offline',
 })
 
+const reconciliationForm = reactive({
+  action: 'recheck' as ReconciliationAction,
+  note: '',
+})
+
+const availableReconciliationActions = computed<ReconciliationAction[]>(() => {
+  const issue = selectedReconciliationIssue.value
+  if (!issue) return []
+  if (issue.status !== 'open') return ['reopen']
+  return issue.repairable ? ['repair', 'recheck', 'dismiss'] : ['recheck', 'dismiss']
+})
+
 const attributionForm = reactive({
   channel_org_id: 0,
   referrer_member_id: null as number | null,
@@ -1587,6 +1795,21 @@ const columns = computed<Column[]>(() => {
       { key: 'actions', label: t('common.actions') },
     ]
   }
+  if (activeTab.value === 'reconciliation') {
+    return [
+      { key: 'id', label: t('admin.distribution.columns.id') },
+      { key: 'organization_name', label: t('admin.distribution.columns.organizationName') },
+      { key: 'issue_type', label: t('admin.distribution.columns.issueType') },
+      { key: 'severity', label: t('admin.distribution.columns.severity') },
+      { key: 'status', label: t('admin.distribution.columns.status') },
+      { key: 'expected_amount', label: t('admin.distribution.columns.expectedAmount') },
+      { key: 'actual_amount', label: t('admin.distribution.columns.actualAmount') },
+      { key: 'occurrence_count', label: t('admin.distribution.columns.occurrenceCount') },
+      { key: 'details_summary', label: t('admin.distribution.columns.summary') },
+      { key: 'last_detected_at', label: t('admin.distribution.columns.lastDetectedAt') },
+      { key: 'actions', label: t('common.actions') },
+    ]
+  }
   if (activeTab.value === 'attributions') {
     return [
       { key: 'user', label: t('admin.distribution.columns.user') },
@@ -1622,9 +1845,10 @@ function buildParams(): DistributionListParams {
     user_id: usesUserFilter(activeTab.value) ? filters.user_id || undefined : undefined,
     role_type: activeTab.value === 'members' || activeTab.value === 'promotion-links' ? filters.role_type || undefined : undefined,
     alert_type: activeTab.value === 'alert-events' ? filters.alert_type || undefined : undefined,
-    severity: activeTab.value === 'alert-events' ? filters.alert_severity || undefined : undefined,
+    issue_type: activeTab.value === 'reconciliation' ? filters.reconciliation_type || undefined : undefined,
+    severity: activeTab.value === 'alert-events' ? filters.alert_severity || undefined : activeTab.value === 'reconciliation' ? filters.reconciliation_severity || undefined : undefined,
     request_type: activeTab.value === 'wallet-requests' ? filters.request_type || undefined : undefined,
-    status: activeTab.value === 'wallet-requests' ? filters.request_status || undefined : activeTab.value === 'alert-events' ? filters.alert_status || undefined : undefined,
+    status: activeTab.value === 'wallet-requests' ? filters.request_status || undefined : activeTab.value === 'alert-events' ? filters.alert_status || undefined : activeTab.value === 'reconciliation' ? filters.reconciliation_status || undefined : undefined,
     transaction_type: activeTab.value === 'wallet-transactions' ? filters.transaction_type || undefined : undefined,
   }
 }
@@ -1633,24 +1857,7 @@ async function loadActiveTab() {
   loading.value = true
   try {
     const params = buildParams()
-    const result =
-      activeTab.value === 'organizations'
-        ? await listDistributionOrganizations({ page: pagination.page, page_size: pagination.page_size })
-        : activeTab.value === 'members'
-          ? await listDistributionMembers(params)
-          : activeTab.value === 'promotion-links'
-            ? await listDistributionPromotionLinks(params)
-            : activeTab.value === 'wallets'
-              ? await listDistributionWallets(params)
-              : activeTab.value === 'alert-events'
-                ? await listDistributionAlertEvents(params)
-              : activeTab.value === 'wallet-requests'
-                ? await listDistributionWalletRequests(params)
-              : activeTab.value === 'wallet-transactions'
-                ? await listDistributionWalletTransactions(params)
-            : activeTab.value === 'attributions'
-              ? await listDistributionAttributions(params)
-              : await listDistributionCommissions(params)
+    const result = await fetchActiveTab(params)
 
     rows.value = result.items || []
     if (activeTab.value === 'organizations') {
@@ -1663,10 +1870,99 @@ async function loadActiveTab() {
     if (totalKey in totals) {
       totals[totalKey as keyof typeof totals] = result.total || 0
     }
+    if (activeTab.value === 'reconciliation') {
+      await loadReconciliationSummary()
+    }
   } catch (error) {
     appStore.showError(extractI18nErrorMessage(error, t, 'admin.distribution.errors', t('admin.distribution.errors.loadFailed')))
   } finally {
     loading.value = false
+  }
+}
+
+function fetchActiveTab(params: DistributionListParams) {
+  switch (activeTab.value) {
+    case 'organizations':
+      return listDistributionOrganizations({ page: pagination.page, page_size: pagination.page_size })
+    case 'members':
+      return listDistributionMembers(params)
+    case 'promotion-links':
+      return listDistributionPromotionLinks(params)
+    case 'wallets':
+      return listDistributionWallets(params)
+    case 'alert-events':
+      return listDistributionAlertEvents(params)
+    case 'wallet-requests':
+      return listDistributionWalletRequests(params)
+    case 'wallet-transactions':
+      return listDistributionWalletTransactions(params)
+    case 'reconciliation':
+      return listDistributionReconciliationIssues(params)
+    case 'attributions':
+      return listDistributionAttributions(params)
+    default:
+      return listDistributionCommissions(params)
+  }
+}
+
+async function loadReconciliationSummary() {
+  try {
+    Object.assign(reconciliationSummary, await getDistributionReconciliationSummary())
+  } catch (error) {
+    appStore.showError(extractI18nErrorMessage(error, t, 'admin.distribution.errors', t('admin.distribution.errors.loadFailed')))
+  }
+}
+
+async function runReconciliationNow() {
+  reconciliationRunning.value = true
+  try {
+    const run = await runDistributionReconciliation()
+    appStore.showSuccess(t('admin.distribution.messages.reconciliationCompleted', { issues: run.issue_count, resolved: run.resolved_count }))
+    pagination.page = 1
+    await loadActiveTab()
+  } catch (error) {
+    appStore.showError(extractI18nErrorMessage(error, t, 'admin.distribution.errors', t('admin.distribution.errors.reconciliationFailed')))
+  } finally {
+    reconciliationRunning.value = false
+  }
+}
+
+function openReconciliationDialog(row: DistributionReconciliationIssue) {
+  selectedReconciliationIssue.value = row
+  reconciliationForm.action = row.status === 'open' ? (row.repairable ? 'repair' : 'recheck') : 'reopen'
+  reconciliationForm.note = ''
+  reconciliationIssueActions.value = []
+  reconciliationDialog.value = true
+  void loadReconciliationIssueActions(row.id)
+}
+
+async function loadReconciliationIssueActions(issueId: number) {
+  loadingReconciliationIssueActions.value = true
+  try {
+    reconciliationIssueActions.value = await listDistributionReconciliationIssueActions(issueId)
+  } catch (error) {
+    appStore.showError(extractI18nErrorMessage(error, t, 'admin.distribution.errors', t('admin.distribution.errors.loadFailed')))
+  } finally {
+    loadingReconciliationIssueActions.value = false
+  }
+}
+
+async function submitReconciliationResolution() {
+  const issue = selectedReconciliationIssue.value
+  if (!issue) return
+  saving.value = true
+  try {
+    await resolveDistributionReconciliationIssue(issue.id, {
+      action: reconciliationForm.action,
+      note: reconciliationForm.note.trim() || undefined,
+    })
+    appStore.showSuccess(t('admin.distribution.messages.reconciliationIssueUpdated'))
+    reconciliationDialog.value = false
+    await loadActiveTab()
+  } catch (error) {
+    appStore.showError(extractI18nErrorMessage(error, t, 'admin.distribution.errors', t('admin.distribution.errors.reconciliationResolutionFailed')))
+  } finally {
+    saving.value = false
   }
 }
 
@@ -2272,25 +2568,42 @@ function alertStatusLabel(status: string) {
   return t(`admin.distribution.alertStatuses.${status}`, status || '-')
 }
 
+function reconciliationTypeLabel(issueType: string) {
+  return t(`admin.distribution.reconciliation.issueTypes.${issueType}`, issueType || '-')
+}
+
+function reconciliationStatusLabel(status: string) {
+  return t(`admin.distribution.reconciliation.statuses.${status}`, status || '-')
+}
+
+function reconciliationActionLabel(action: string) {
+  return t(`admin.distribution.reconciliation.actions.${action}`, action || '-')
+}
+
+function reconciliationRunStatusLabel(status: string) {
+  return t(`admin.distribution.reconciliation.runStatuses.${status}`, status || '-')
+}
+
 function settlementMethodLabel(settlementMethod: string) {
   return t(`admin.distribution.settlementMethods.${settlementMethod}`, settlementMethod || '-')
 }
 
 function statusLabel(status: string) {
+  if (activeTab.value === 'reconciliation' && (status === 'open' || status === 'resolved' || status === 'ignored')) {
+    return reconciliationStatusLabel(status)
+  }
   if (status === 'active' || status === 'resolved') {
     return status === 'resolved' ? alertStatusLabel(status) : t(`admin.distribution.statuses.${status}`, status || '-')
   }
   if (status === 'warning' || status === 'critical' || status === 'info') {
     return alertSeverityLabel(status)
   }
-  if (status === 'active' || status === 'resolved') {
-    return alertStatusLabel(status)
-  }
   return t(`admin.distribution.statuses.${status}`, status || '-')
 }
 
 function statusTone(status: string) {
-  if (status === 'active' || status === 'available' || status === 'settled') return 'green'
+  if (status === 'active' || status === 'available' || status === 'settled' || status === 'resolved') return 'green'
+  if (status === 'open') return 'red'
   if (status === 'frozen' || status === 'inactive') return 'amber'
   return 'gray'
 }
@@ -2339,6 +2652,19 @@ function alertSummary(row: DistributionAlertEvent | TableRow) {
   }
 }
 
+function reconciliationDetailsSummary(row: DistributionReconciliationIssue | TableRow) {
+  const details = row.details && typeof row.details === 'object' ? row.details as Record<string, unknown> : {}
+  const summary = Object.entries(details)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : String(value)}`)
+    .join(' · ')
+  return summary || '-'
+}
+
+function rowDetailsSummary(row: TableRow) {
+  return activeTab.value === 'reconciliation' ? reconciliationDetailsSummary(row) : alertSummary(row)
+}
+
 watch(activeTab, () => {
   rows.value = []
   pagination.page = 1
@@ -2357,6 +2683,11 @@ watch(activeTab, () => {
     filters.request_status = ''
   }
   if (activeTab.value !== 'wallet-transactions') filters.transaction_type = ''
+  if (activeTab.value !== 'reconciliation') {
+    filters.reconciliation_type = ''
+    filters.reconciliation_status = ''
+    filters.reconciliation_severity = ''
+  }
   void loadActiveTab()
 }, { immediate: true })
 
@@ -2370,6 +2701,7 @@ const StatusPill = defineComponent({
       if (props.tone === 'green') return 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300'
       if (props.tone === 'amber') return 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300'
       if (props.tone === 'blue') return 'bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-300'
+      if (props.tone === 'red') return 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-300'
       return 'bg-gray-50 text-gray-700 ring-gray-600/20 dark:bg-dark-700 dark:text-dark-300'
     })
     return () => h('span', { class: ['inline-flex rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset', toneClass.value] }, props.label)

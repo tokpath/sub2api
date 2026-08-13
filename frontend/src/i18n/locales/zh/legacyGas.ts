@@ -361,7 +361,8 @@ export default {
         "walletRequests": "充值/退款申请",
         "walletTransactions": "钱包流水",
         "attributions": "归因用户",
-        "commissions": "佣金流水"
+        "commissions": "佣金流水",
+        "reconciliation": "账务对账"
       },
       "globalSettings": {
         "title": "全局设置",
@@ -399,7 +400,10 @@ export default {
         "rechargeWallet": "确认充值",
         "refundWallet": "确认退款",
         "settleCommission": "结算佣金",
-        "reverseCommission": "冲正佣金"
+        "reverseCommission": "冲正佣金",
+        "runReconciliation": "立即对账",
+        "reconciliationRunning": "对账中…",
+        "handleReconciliationIssue": "处置"
       },
       "filters": {
         "channelOrgId": "渠道组织",
@@ -408,6 +412,8 @@ export default {
         "allAlertTypes": "全部预警类型",
         "allAlertStatuses": "全部预警状态",
         "allSeverities": "全部严重级别",
+        "allReconciliationTypes": "全部差异类型",
+        "allReconciliationStatuses": "全部处置状态",
         "allRequestTypes": "全部申请类型",
         "allRequestStatuses": "全部申请状态"
       },
@@ -420,6 +426,7 @@ export default {
         "rechargeTitle": "确认预充值到账",
         "refundTitle": "确认预充值退款",
         "settleTitle": "结算佣金",
+        "reconciliationTitle": "处置账务差异",
         "attributionTitle": "调整归因",
         "attributionAuditTitle": "归因审计"
       },
@@ -453,6 +460,8 @@ export default {
         "refundAmount": "退款金额",
         "referenceNo": "凭证号",
         "note": "备注",
+        "resolutionAction": "处置动作",
+        "resolutionNote": "处置说明",
         "refundHint": "当前为 mock 退款记账流程，不会调用外部退款接口；手续费按渠道退款费率计算。",
         "settlementMethod": "结算方式",
         "commissionSettlementMethod": "默认结算方式",
@@ -539,7 +548,12 @@ export default {
         "createdAt": "创建时间",
         "triggeredAt": "触发时间",
         "resolvedAt": "恢复时间",
-        "lastObservedAt": "最后观察时间"
+        "lastObservedAt": "最后观察时间",
+        "issueType": "差异类型",
+        "expectedAmount": "应有金额",
+        "actualAmount": "实际金额",
+        "occurrenceCount": "发现次数",
+        "lastDetectedAt": "最后发现"
       },
       "targetTypes": {
         "registration": "注册",
@@ -595,12 +609,17 @@ export default {
         "attributionUpdated": "归因已更新",
         "noAttributionAudits": "暂无归因审计记录",
         "commissionSettled": "佣金已结算",
-        "commissionReversed": "佣金已冲正"
+        "commissionReversed": "佣金已冲正",
+        "reconciliationCompleted": "对账完成：发现 {issues} 项，自动关闭 {resolved} 项",
+        "reconciliationIssueUpdated": "账务差异已更新",
+        "noReconciliationIssueActions": "暂无处置记录"
       },
       "errors": {
         "loadFailed": "加载分销数据失败",
         "createFailed": "创建分销记录失败",
         "updateFailed": "更新分销记录失败",
+        "reconciliationFailed": "账务对账执行失败",
+        "reconciliationResolutionFailed": "账务差异处置失败",
         "levelsFormatError": "渠道分销等级 JSON 格式不正确。",
         "levelsValidationError": "请检查渠道代理等级配置后再保存。"
       },
@@ -628,6 +647,45 @@ export default {
         "balanceExhausted": "当前可用余额 {available}，渠道已停止新的 API 消耗。{note}",
         "consumptionWarning": "当前剩余额度 {remaining}，总额度上限 {limit}。{note}",
         "consumptionExhausted": "当前累计消耗 {consumed}，已达到额度上限 {limit}。{note}"
+      },
+      "reconciliation": {
+        "openIssues": "待处置差异",
+        "criticalIssues": "严重差异",
+        "repairableIssues": "可安全修复",
+        "latestRun": "最近对账",
+        "latestRunResult": "发现 {issues} 项，关闭 {resolved} 项",
+        "run": "对账批次",
+        "actionHistory": "处置记录",
+        "repairHint": "仅会从不可变钱包流水重建累计消耗，不会猜测性修改预付余额或佣金。",
+        "issueTypes": {
+          "usage_wallet_transaction_missing": "用量钱包流水缺失",
+          "usage_wallet_amount_mismatch": "用量扣款金额不一致",
+          "usage_commission_reserve_mismatch": "用量佣金预留不一致",
+          "usage_commission_ledger_mismatch": "用量佣金台账不一致",
+          "wallet_state_mismatch": "钱包状态与末笔流水不一致",
+          "wallet_commission_reserved_mismatch": "佣金预留与未结台账不一致",
+          "wallet_total_consumed_mismatch": "累计消耗与流水不一致",
+          "commission_wallet_action_missing": "佣金结算钱包动作缺失",
+          "commission_reversal_wallet_action_missing": "佣金冲正钱包动作缺失",
+          "commission_balance_audit_missing": "佣金余额入账审计缺失",
+          "commission_reversal_balance_audit_missing": "佣金冲正余额审计缺失"
+        },
+        "statuses": {
+          "open": "待处置",
+          "resolved": "已解决",
+          "ignored": "已忽略"
+        },
+        "runStatuses": {
+          "running": "执行中",
+          "completed": "已完成",
+          "failed": "执行失败"
+        },
+        "actions": {
+          "repair": "按流水安全修复",
+          "dismiss": "忽略并留痕",
+          "reopen": "重新打开",
+          "recheck": "重新检测"
+        }
       },
       "requestStatuses": {
         "pending": "待审核",

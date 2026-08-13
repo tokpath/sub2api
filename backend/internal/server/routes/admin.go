@@ -143,6 +143,11 @@ func registerDistributionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		distribution.GET("/stats", h.Admin.Distribution.GetStats)
 		distribution.POST("/commissions/:commission_id/settle", h.Admin.Distribution.SettleCommission)
 		distribution.POST("/commissions/:commission_id/reverse", h.Admin.Distribution.ReverseCommission)
+		distribution.GET("/reconciliation/issues", h.Admin.Distribution.ListReconciliationIssues)
+		distribution.GET("/reconciliation/summary", h.Admin.Distribution.GetReconciliationSummary)
+		distribution.GET("/reconciliation/issues/:issue_id/actions", h.Admin.Distribution.ListReconciliationIssueActions)
+		distribution.POST("/reconciliation/run", h.Admin.Distribution.RunReconciliation)
+		distribution.POST("/reconciliation/issues/:issue_id/resolve", h.Admin.Distribution.ResolveReconciliationIssue)
 	}
 }
 
