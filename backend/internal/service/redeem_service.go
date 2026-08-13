@@ -32,9 +32,9 @@ const (
 
 type ctxKeySkipRedeemAffiliate struct{}
 
-// ContextSkipRedeemAffiliate returns a context that suppresses the redeem-level
-// affiliate rebate. Used by payment fulfillment which handles rebate separately
-// via applyAffiliateRebateForOrder (with audit-log deduplication).
+// ContextSkipRedeemAffiliate returns a context that suppresses the legacy
+// redeem-level affiliate rebate. Payment fulfillment now uses distribution
+// accounting exclusively and must not create a second payment-based reward.
 func ContextSkipRedeemAffiliate(ctx context.Context) context.Context {
 	return context.WithValue(ctx, ctxKeySkipRedeemAffiliate{}, true)
 }

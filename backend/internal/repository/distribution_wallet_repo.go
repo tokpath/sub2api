@@ -472,15 +472,19 @@ SELECT
 }
 
 type distributionWalletMutationState struct {
-	transactionType string
-	prepaidBalance  float64
-	reservedBalance float64
-	totalRecharged  float64
-	totalConsumed   float64
-	status          string
-	referenceNo     string
-	note            string
-	operatorUserID  *int64
+	transactionType     string
+	prepaidBalance      float64
+	reservedBalance     float64
+	totalRecharged      float64
+	totalConsumed       float64
+	status              string
+	referenceNo         string
+	note                string
+	operatorUserID      *int64
+	billingUsageEntryID *int64
+	usageLogID          *int64
+	requestID           string
+	apiKeyID            *int64
 }
 
 type distributionWalletMutationBuilder func(current *service.DistributionWallet) (*distributionWalletMutationState, error)
@@ -866,6 +870,9 @@ func insertDistributionWalletTransaction(
 	if state.transactionType == "" {
 		return service.ErrInvalidDistributionWalletTransaction
 	}
+	if state.billingUsageEntryID != nil {
+		return insertDistributionUsageWalletTransaction(ctx, tx, channelOrgID, amount, before, after, state)
+	}
 	rows, err := tx.QueryContext(ctx, `
 INSERT INTO channel_wallet_transactions (
     channel_org_id,
@@ -895,6 +902,65 @@ RETURNING id`,
 	)
 	if err != nil {
 		return fmt.Errorf("insert distribution wallet transaction: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var id int64
+	if !rows.Next() {
+		return service.ErrInvalidDistributionWalletTransaction
+	}
+	if err := rows.Scan(&id); err != nil {
+		return err
+	}
+	return rows.Err()
+}
+
+func insertDistributionUsageWalletTransaction(
+	ctx context.Context,
+	tx *sql.Tx,
+	channelOrgID int64,
+	amount float64,
+	before *service.DistributionWallet,
+	after *service.DistributionWallet,
+	state *distributionWalletMutationState,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+INSERT INTO channel_wallet_transactions (
+    channel_org_id,
+    transaction_type,
+    amount,
+    prepaid_balance_before,
+    prepaid_balance_after,
+    commission_reserved_before,
+    commission_reserved_after,
+    reference_no,
+    note,
+    operator_user_id,
+    billing_usage_entry_id,
+    usage_log_id,
+    request_id,
+    api_key_id,
+    created_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+RETURNING id`,
+		channelOrgID,
+		state.transactionType,
+		amount,
+		before.PrepaidBalance,
+		after.PrepaidBalance,
+		before.CommissionReserved,
+		after.CommissionReserved,
+		strings.TrimSpace(state.referenceNo),
+		strings.TrimSpace(state.note),
+		nullableInt64Arg(state.operatorUserID),
+		nullableInt64Arg(state.billingUsageEntryID),
+		nullableInt64Arg(state.usageLogID),
+		strings.TrimSpace(state.requestID),
+		nullableInt64Arg(state.apiKeyID),
+	)
+	if err != nil {
+		return fmt.Errorf("insert distribution usage wallet transaction: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 

@@ -197,16 +197,21 @@ type mediaLastUsedScheduler interface {
 	ScheduleLastUsedUpdate(accountID int64)
 }
 
+type mediaDistributionAccountingPlanner interface {
+	PrepareUsageAccounting(ctx context.Context, usageLog *service.UsageLog) (*service.DistributionUsageAccountingPlan, error)
+}
+
 type mediaChargerDeps struct {
-	billingRepo       mediaBillingApplier
-	usageLogs         mediaUsageLogWriter
-	billingCache      mediaBillingCacheUpdater
-	apiKeys           mediaAPIKeyGetter
-	accounts          mediaAccountGetter
-	groups            mediaGroupGetter
-	subscriptions     mediaSubscriptionGetter
-	authInvalidator   mediaAuthCacheInvalidator
-	lastUsedScheduler mediaLastUsedScheduler
+	billingRepo            mediaBillingApplier
+	usageLogs              mediaUsageLogWriter
+	billingCache           mediaBillingCacheUpdater
+	apiKeys                mediaAPIKeyGetter
+	accounts               mediaAccountGetter
+	groups                 mediaGroupGetter
+	subscriptions          mediaSubscriptionGetter
+	authInvalidator        mediaAuthCacheInvalidator
+	lastUsedScheduler      mediaLastUsedScheduler
+	distributionAccounting mediaDistributionAccountingPlanner
 }
 
 // ProvideMediaCharger 把 media.ChargeRequest 翻译为上游 UsageBillingCommand，
@@ -221,17 +226,19 @@ func ProvideMediaCharger(
 	subscriptions service.UserSubscriptionRepository,
 	authInvalidator service.APIKeyAuthCacheInvalidator,
 	deferredService *service.DeferredService,
+	distributionCommissionService *service.DistributionCommissionService,
 ) media.Charger {
 	return newMediaCharger(mediaChargerDeps{
-		billingRepo:       repo,
-		usageLogs:         usageLogs,
-		billingCache:      billingCache,
-		apiKeys:           apiKeys,
-		accounts:          accounts,
-		groups:            groups,
-		subscriptions:     subscriptions,
-		authInvalidator:   authInvalidator,
-		lastUsedScheduler: deferredService,
+		billingRepo:            repo,
+		usageLogs:              usageLogs,
+		billingCache:           billingCache,
+		apiKeys:                apiKeys,
+		accounts:               accounts,
+		groups:                 groups,
+		subscriptions:          subscriptions,
+		authInvalidator:        authInvalidator,
+		lastUsedScheduler:      deferredService,
+		distributionAccounting: distributionCommissionService,
 	})
 }
 
@@ -252,15 +259,29 @@ func newMediaCharger(deps mediaChargerDeps) media.Charger {
 		if err != nil {
 			return nil, err
 		}
+		accountRateMultiplier := 1.0
+		if account != nil {
+			accountRateMultiplier = account.BillingRateMultiplier()
+		}
+		usageLog := buildMediaUsageLog(req, billingType, subscriptionID, accountRateMultiplier)
+		var distributionAccounting *service.DistributionUsageAccountingPlan
+		if deps.distributionAccounting != nil {
+			distributionAccounting, err = deps.distributionAccounting.PrepareUsageAccounting(ctx, usageLog)
+			if err != nil {
+				return nil, err
+			}
+		}
 		cmd := &service.UsageBillingCommand{
-			RequestID:      req.RequestID,
-			APIKeyID:       req.APIKeyID,
-			UserID:         req.UserID,
-			AccountID:      req.AccountID,
-			SubscriptionID: subscriptionID,
-			Model:          req.Model,
-			MediaType:      req.MediaType,
-			BillingType:    billingType,
+			RequestID:              req.RequestID,
+			APIKeyID:               req.APIKeyID,
+			UserID:                 req.UserID,
+			AccountID:              req.AccountID,
+			SubscriptionID:         subscriptionID,
+			Model:                  req.Model,
+			MediaType:              req.MediaType,
+			BillingType:            billingType,
+			UsageLog:               usageLog,
+			DistributionAccounting: distributionAccounting,
 		}
 		if account != nil {
 			cmd.AccountType = account.Type
@@ -281,9 +302,7 @@ func newMediaCharger(deps mediaChargerDeps) media.Charger {
 				cmd.APIKeyRateLimitCost = req.ActualCost
 			}
 		}
-		accountRateMultiplier := 1.0
 		if account != nil {
-			accountRateMultiplier = account.BillingRateMultiplier()
 			if req.CostBillingCurrency > 0 && account.IsAPIKeyOrBedrock() && account.HasAnyQuotaLimit() {
 				cmd.AccountQuotaCost = req.CostBillingCurrency * accountRateMultiplier
 			}
@@ -299,7 +318,9 @@ func newMediaCharger(deps mediaChargerDeps) media.Charger {
 			syncMediaChargeCaches(ctx, deps, req, apiKey, billingType, result)
 			scheduleMediaAccountLastUsed(deps.lastUsedScheduler, req.AccountID)
 		}
-		writeMediaUsageLog(ctx, deps.usageLogs, buildMediaUsageLog(req, billingType, subscriptionID, accountRateMultiplier))
+		if applied && usageLog.ID <= 0 {
+			writeMediaUsageLog(ctx, deps.usageLogs, usageLog)
+		}
 		var newBalance *float64
 		if result != nil {
 			newBalance = result.NewBalance

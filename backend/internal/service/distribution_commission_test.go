@@ -257,6 +257,92 @@ func TestDistributionCommissionService_ReservesWalletForPayableSettlementModes(t
 	require.InDelta(t, 1.5, walletRepo.reserved[0].amount, 0.0001)
 }
 
+func TestDistributionCommissionService_PrepareUsageAccountingDoesNotMutateFinancialState(t *testing.T) {
+	directMemberID := int64(42)
+	parentMemberID := int64(41)
+	managerMemberID := int64(40)
+	repo := &distributionCommissionRepoStub{}
+	walletRepo := &distributionCommissionWalletRepoStub{}
+	svc := NewDistributionCommissionService(
+		&distributionCommissionAttributionRepoStub{
+			attribution: &DistributionAttribution{
+				UserID:           7,
+				ChannelOrgID:     99,
+				ReferrerMemberID: &directMemberID,
+			},
+		},
+		&distributionCommissionMemberRepoStub{
+			memberByID: map[int64]*DistributionMemberView{
+				directMemberID: {
+					MemberID:       directMemberID,
+					UserID:         12,
+					ChannelOrgID:   99,
+					RoleType:       "kol1",
+					ParentMemberID: &parentMemberID,
+					CommissionRate: 0.15,
+					Status:         "active",
+				},
+				parentMemberID: {
+					MemberID:       parentMemberID,
+					UserID:         11,
+					ChannelOrgID:   99,
+					RoleType:       "agent",
+					CommissionRate: 0.22,
+					Status:         "active",
+				},
+			},
+			memberByRole: map[string]*DistributionMemberView{
+				"manager": {
+					MemberID:       managerMemberID,
+					UserID:         10,
+					ChannelOrgID:   99,
+					RoleType:       "manager",
+					CommissionRate: 0.30,
+					Status:         "active",
+				},
+			},
+		},
+		&distributionCommissionOrgRepoStub{
+			org: &DistributionOrganization{
+				ID:     99,
+				Type:   "reseller",
+				Status: "active",
+				Config: map[string]any{
+					"channel_commission_rate": 0.05,
+					"management_reward_cap":   0.08,
+					"commission_upper_ratio":  0.35,
+					"consumption_limit":       1_000.0,
+				},
+			},
+		},
+		nil,
+		repo,
+		nil,
+		0,
+	)
+	svc.SetWalletRepository(walletRepo)
+
+	plan, err := svc.PrepareUsageAccounting(context.Background(), &UsageLog{
+		ID:        556,
+		UserID:    7,
+		TotalCost: 100,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.Equal(t, int64(99), plan.ChannelOrgID)
+	require.InDelta(t, 100.0, plan.ConsumptionAmount, 0.0001)
+	require.InDelta(t, 1_000.0, plan.ConsumptionLimit, 0.0001)
+	require.Len(t, plan.Commissions, 3)
+	require.Equal(t, "direct", plan.Commissions[0].CommissionType)
+	require.InDelta(t, 15.0, plan.Commissions[0].Amount, 0.0001)
+	require.Equal(t, "management_reward", plan.Commissions[1].CommissionType)
+	require.InDelta(t, 7.0, plan.Commissions[1].Amount, 0.0001)
+	require.Equal(t, "channel_commission", plan.Commissions[2].CommissionType)
+	require.InDelta(t, 5.0, plan.Commissions[2].Amount, 0.0001)
+	require.Empty(t, repo.inputs)
+	require.Empty(t, walletRepo.reserved)
+}
+
 type distributionCommissionAccrualStub struct {
 	calls    int
 	usageLog *UsageLog

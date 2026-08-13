@@ -317,13 +317,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		)
 	}
 
-	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
-		recordDistributionCommissionBestEffort(ctx, s.distributionCommissionService, usageLog, "service.openai_gateway")
-		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
-		s.deferredService.ScheduleLastUsedUpdate(account.ID)
-		return nil
+	distributionAccounting, distributionPlanned, err := prepareDistributionUsageAccounting(ctx, s.distributionCommissionService, usageLog)
+	if err != nil {
+		return err
 	}
+	useAtomicDistribution := distributionPlanned && s.usageBillingRepo != nil
+	simpleMode := s.cfg != nil && s.cfg.RunMode == config.RunModeSimple
 
 	// Async usage billing runs outside the original request context, so it
 	// cannot recover ForcePlatform there. Fall back for internal/test callers.
@@ -332,18 +331,22 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		quotaPlatform = PlatformFromAPIKey(apiKey)
 	}
 
+	var applied bool
 	billingErr := func() error {
-		_, err := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
-			Cost:                  cost,
-			User:                  user,
-			APIKey:                apiKey,
-			Account:               account,
-			Subscription:          subscription,
-			RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
-			IsSubscriptionBill:    isSubscriptionBilling,
-			AccountRateMultiplier: accountRateMultiplier,
-			APIKeyService:         input.APIKeyService,
-			Platform:              quotaPlatform,
+		var err error
+		applied, err = applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
+			Cost:                   cost,
+			User:                   user,
+			APIKey:                 apiKey,
+			Account:                account,
+			Subscription:           subscription,
+			RequestPayloadHash:     resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
+			IsSubscriptionBill:     isSubscriptionBilling,
+			AccountRateMultiplier:  accountRateMultiplier,
+			APIKeyService:          input.APIKeyService,
+			Platform:               quotaPlatform,
+			SkipCoreBilling:        simpleMode,
+			DistributionAccounting: distributionAccounting,
 		}, s.billingDeps(), s.usageBillingRepo)
 		return err
 	}()
@@ -351,13 +354,23 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if billingErr != nil {
 		return billingErr
 	}
-	if s.distributionChannelBilling != nil {
-		if err := s.distributionChannelBilling.ConsumeUsage(ctx, usageLog); err != nil {
-			return err
-		}
+	if !applied {
+		return nil
 	}
-	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
-	recordDistributionCommissionBestEffort(ctx, s.distributionCommissionService, usageLog, "service.openai_gateway")
+	if !useAtomicDistribution {
+		if s.distributionChannelBilling != nil {
+			if err := s.distributionChannelBilling.ConsumeUsage(ctx, usageLog); err != nil {
+				return err
+			}
+		}
+		recordDistributionCommissionBestEffort(ctx, s.distributionCommissionService, usageLog, "service.openai_gateway")
+	}
+	if usageLog.ID <= 0 {
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	}
+	if simpleMode {
+		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (core billing skipped): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
+	}
 
 	return nil
 }

@@ -627,9 +627,11 @@ func ProvideDistributionCommissionService(
 	commissionRepo DistributionCommissionRepository,
 	historyRepo DistributionCommissionHistoryRepository,
 	walletRepo DistributionWalletMutationRepository,
+	settingService *SettingService,
 ) *DistributionCommissionService {
 	svc := NewDistributionCommissionService(attributionRepo, memberRepo, organizationRepo, consumptionRepo, commissionRepo, historyRepo, 7*24*time.Hour)
 	svc.SetWalletRepository(walletRepo)
+	svc.SetSettingService(settingService)
 	return svc
 }
 

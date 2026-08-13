@@ -2,8 +2,11 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -51,7 +54,25 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	}
 
 	result := &service.UsageBillingApplyResult{Applied: true}
-	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
+	usageLog, err := persistUsageBillingLog(ctx, tx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	if usageLog != nil {
+		result.UsageLogID = usageLog.ID
+		entryID, err := insertBillingUsageEntry(ctx, tx, cmd, usageLog.ID)
+		if err != nil {
+			return nil, err
+		}
+		result.BillingUsageEntryID = entryID
+	}
+
+	if !cmd.SkipCoreBilling {
+		if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
+			return nil, err
+		}
+	}
+	if err := applyDistributionUsageAccounting(ctx, tx, cmd, result); err != nil {
 		return nil, err
 	}
 
@@ -59,6 +80,11 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 		return nil, err
 	}
 	tx = nil
+	if cmd.UsageLog != nil && usageLog != nil {
+		cmd.UsageLog.ID = usageLog.ID
+		cmd.UsageLog.CreatedAt = usageLog.CreatedAt
+		cmd.UsageLog.RateMultiplier = usageLog.RateMultiplier
+	}
 	return result, nil
 }
 
@@ -210,6 +236,309 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	return nil
+}
+
+func persistUsageBillingLog(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (*service.UsageLog, error) {
+	if cmd == nil || cmd.UsageLog == nil {
+		return nil, nil
+	}
+	usageLog := *cmd.UsageLog
+	usageLog.RequestID = cmd.RequestID
+	usageLog.APIKeyID = cmd.APIKeyID
+	usageLog.UserID = cmd.UserID
+	usageLog.AccountID = cmd.AccountID
+	repo := newUsageLogRepositoryWithSQL(nil, tx)
+	if _, err := repo.createSingle(ctx, tx, &usageLog); err != nil {
+		return nil, fmt.Errorf("persist usage log in billing transaction: %w", err)
+	}
+	if usageLog.ID <= 0 {
+		return nil, errors.New("persisted usage log has no id")
+	}
+	return &usageLog, nil
+}
+
+func insertBillingUsageEntry(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, usageLogID int64) (int64, error) {
+	if cmd == nil || usageLogID <= 0 {
+		return 0, nil
+	}
+	var channelOrgID any
+	if cmd.DistributionAccounting != nil && cmd.DistributionAccounting.ChannelOrgID > 0 {
+		channelOrgID = cmd.DistributionAccounting.ChannelOrgID
+	}
+	userDelta := cmd.BalanceCost + cmd.SubscriptionCost
+	if cmd.SkipCoreBilling {
+		userDelta = 0
+	}
+	var entryID int64
+	err := tx.QueryRowContext(ctx, `
+		INSERT INTO billing_usage_entries (
+			usage_log_id,
+			user_id,
+			api_key_id,
+			subscription_id,
+			billing_type,
+			applied,
+			delta_usd,
+			request_id,
+			request_fingerprint,
+			channel_org_id,
+			channel_usage_delta,
+			commission_reserved_delta,
+			created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9, 0, 0, NOW())
+		RETURNING id
+	`,
+		usageLogID,
+		cmd.UserID,
+		cmd.APIKeyID,
+		nullableInt64Arg(cmd.SubscriptionID),
+		cmd.BillingType,
+		userDelta,
+		cmd.RequestID,
+		cmd.RequestFingerprint,
+		channelOrgID,
+	).Scan(&entryID)
+	if err != nil {
+		return 0, fmt.Errorf("insert billing usage entry: %w", err)
+	}
+	return entryID, nil
+}
+
+func applyDistributionUsageAccounting(
+	ctx context.Context,
+	tx *sql.Tx,
+	cmd *service.UsageBillingCommand,
+	result *service.UsageBillingApplyResult,
+) error {
+	if cmd == nil || cmd.DistributionAccounting == nil || cmd.DistributionAccounting.ChannelOrgID <= 0 {
+		return nil
+	}
+	if result == nil || result.UsageLogID <= 0 || result.BillingUsageEntryID <= 0 {
+		return errors.New("distribution usage accounting requires a persisted billing event")
+	}
+	plan := cmd.DistributionAccounting
+	org, err := getDistributionOrganizationByID(ctx, tx, plan.ChannelOrgID)
+	if err != nil {
+		return err
+	}
+	if org == nil {
+		return service.ErrInvalidDistributionOrganization
+	}
+	if !strings.EqualFold(strings.TrimSpace(org.Status), "active") {
+		return service.ErrDistributionChannelSuspended
+	}
+	consumptionAmount := plan.ConsumptionAmount
+	if consumptionAmount < 0 {
+		return service.ErrInvalidDistributionWalletTransaction
+	}
+
+	reservedAmount, err := insertDistributionUsageCommissions(ctx, tx, cmd, result, plan)
+	if err != nil {
+		return err
+	}
+	if !distributionOrganizationUsesWallet(org.Type) {
+		return updateDistributionBillingEventTotals(ctx, tx, result.BillingUsageEntryID, consumptionAmount, 0)
+	}
+
+	if consumptionAmount <= 0 && reservedAmount <= 0 {
+		return nil
+	}
+	current, err := getDistributionWalletByChannelOrgID(ctx, tx, plan.ChannelOrgID, true)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		return service.ErrInvalidDistributionWallet
+	}
+	if service.NormalizeDistributionWalletStatus(current.Status) != "active" {
+		return service.ErrDistributionChannelSuspended
+	}
+	consumptionLimit := plan.ConsumptionLimit
+	if consumptionLimit <= 0 {
+		consumptionLimit = distributionWalletConsumptionLimitFromConfig(org.Config)
+	}
+	if consumptionLimit > 0 && current.TotalConsumed+consumptionAmount > consumptionLimit {
+		return service.ErrDistributionChannelConsumptionLimitExceeded
+	}
+	if current.PrepaidBalance-current.CommissionReserved < consumptionAmount+reservedAmount {
+		return service.ErrDistributionWalletInsufficientBalance
+	}
+
+	intermediate := *current
+	intermediate.PrepaidBalance -= consumptionAmount
+	intermediate.TotalConsumed += consumptionAmount
+	finalState := distributionWalletMutationState{
+		prepaidBalance:  intermediate.PrepaidBalance,
+		reservedBalance: intermediate.CommissionReserved + reservedAmount,
+		totalRecharged:  intermediate.TotalRecharged,
+		totalConsumed:   intermediate.TotalConsumed,
+	}
+	finalState.status = resolveDistributionWalletMutationStatus(current, &finalState, org)
+	updated, err := updateDistributionWalletState(ctx, tx, plan.ChannelOrgID, &finalState)
+	if err != nil {
+		return err
+	}
+
+	entryID := result.BillingUsageEntryID
+	usageLogID := result.UsageLogID
+	apiKeyID := cmd.APIKeyID
+	if consumptionAmount > 0 {
+		state := distributionWalletMutationState{
+			transactionType:     "consume",
+			billingUsageEntryID: &entryID,
+			usageLogID:          &usageLogID,
+			requestID:           cmd.RequestID,
+			apiKeyID:            &apiKeyID,
+		}
+		if err := insertDistributionWalletTransaction(ctx, tx, plan.ChannelOrgID, consumptionAmount, current, &intermediate, &state); err != nil {
+			return err
+		}
+	}
+	if reservedAmount > 0 {
+		state := distributionWalletMutationState{
+			transactionType:     "commission_reserve",
+			billingUsageEntryID: &entryID,
+			usageLogID:          &usageLogID,
+			requestID:           cmd.RequestID,
+			apiKeyID:            &apiKeyID,
+		}
+		if err := insertDistributionWalletTransaction(ctx, tx, plan.ChannelOrgID, reservedAmount, &intermediate, updated, &state); err != nil {
+			return err
+		}
+	}
+	if err := syncDistributionAlertEvents(ctx, tx, org, updated); err != nil {
+		return err
+	}
+	return updateDistributionBillingEventTotals(ctx, tx, result.BillingUsageEntryID, consumptionAmount, reservedAmount)
+}
+
+func updateDistributionBillingEventTotals(
+	ctx context.Context,
+	tx *sql.Tx,
+	billingUsageEntryID int64,
+	consumptionAmount float64,
+	reservedAmount float64,
+) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE billing_usage_entries
+		SET channel_usage_delta = $2,
+			commission_reserved_delta = $3
+		WHERE id = $1
+	`, billingUsageEntryID, consumptionAmount, reservedAmount); err != nil {
+		return fmt.Errorf("update distribution billing event totals: %w", err)
+	}
+	return nil
+}
+
+func insertDistributionUsageCommissions(
+	ctx context.Context,
+	tx *sql.Tx,
+	cmd *service.UsageBillingCommand,
+	result *service.UsageBillingApplyResult,
+	plan *service.DistributionUsageAccountingPlan,
+) (float64, error) {
+	if plan == nil || len(plan.Commissions) == 0 {
+		return 0, nil
+	}
+	reservedAmount := 0.0
+	usageLogID := result.UsageLogID
+	entryID := result.BillingUsageEntryID
+	apiKeyID := cmd.APIKeyID
+	for _, commission := range plan.Commissions {
+		if commission.ChannelOrgID != plan.ChannelOrgID || commission.MemberID <= 0 || commission.UserID <= 0 || commission.BaseAmount <= 0 || commission.Rate <= 0 || commission.Amount <= 0 {
+			return 0, service.ErrInvalidDistributionCommission
+		}
+		dedupKey := strings.TrimSpace(commission.DedupKey)
+		if dedupKey == "" {
+			dedupKey = usageCommissionDedupKey(cmd.RequestID, cmd.APIKeyID, commission.MemberID, commission.CommissionType)
+		}
+		var insertedID int64
+		err := tx.QueryRowContext(ctx, `
+			INSERT INTO commission_ledger (
+				channel_org_id,
+				member_id,
+				user_id,
+				usage_log_id,
+				billing_usage_entry_id,
+				request_id,
+				api_key_id,
+				dedup_key,
+				commission_type,
+				base_amount,
+				rate,
+				amount,
+				status,
+				settlement_method,
+				settlement_reference_no,
+				settlement_note,
+				frozen_until,
+				settled_at,
+				settled_by_user_id,
+				reversed_from_id,
+				created_at,
+				updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())
+			ON CONFLICT (dedup_key) WHERE dedup_key <> '' DO NOTHING
+			RETURNING id
+		`,
+			plan.ChannelOrgID,
+			commission.MemberID,
+			commission.UserID,
+			usageLogID,
+			entryID,
+			cmd.RequestID,
+			apiKeyID,
+			dedupKey,
+			commission.CommissionType,
+			commission.BaseAmount,
+			commission.Rate,
+			commission.Amount,
+			commission.Status,
+			commission.SettlementMethod,
+			commission.SettlementReferenceNo,
+			commission.SettlementNote,
+			nullableTimeArg(commission.FrozenUntil),
+			nullableTimeArg(commission.SettledAt),
+			nullableInt64Arg(commission.SettledByUserID),
+			nullableInt64Arg(commission.ReversedFromID),
+		).Scan(&insertedID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("insert distribution usage commission: %w", err)
+		}
+		if insertedID > 0 && commission.Amount > 0 && distributionCommissionRequiresReserve(commission.SettlementMethod) {
+			reservedAmount += commission.Amount
+		}
+	}
+	return reservedAmount, nil
+}
+
+func usageCommissionDedupKey(requestID string, apiKeyID, memberID int64, commissionType string) string {
+	raw := fmt.Sprintf("%s|%d|%d|%s", strings.TrimSpace(requestID), apiKeyID, memberID, strings.TrimSpace(commissionType))
+	sum := sha256.Sum256([]byte(raw))
+	return "usage:" + hex.EncodeToString(sum[:])
+}
+
+func distributionOrganizationUsesWallet(orgType string) bool {
+	switch strings.ToLower(strings.TrimSpace(orgType)) {
+	case "reseller", "oem":
+		return true
+	default:
+		return false
+	}
+}
+
+func distributionCommissionRequiresReserve(settlementMethod string) bool {
+	switch strings.ToLower(strings.TrimSpace(settlementMethod)) {
+	case "balance", "auto", "manual":
+		return true
+	default:
+		return false
+	}
 }
 
 func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {

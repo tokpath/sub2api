@@ -47,6 +47,9 @@ func (s *openAIRecordUsageBillingRepoStub) Apply(ctx context.Context, cmd *Usage
 		return nil, s.err
 	}
 	if s.result != nil {
+		if s.result.Applied && s.result.UsageLogID > 0 && cmd != nil && cmd.UsageLog != nil {
+			cmd.UsageLog.ID = s.result.UsageLogID
+		}
 		return s.result, nil
 	}
 	return &UsageBillingApplyResult{Applied: true}, nil
@@ -330,6 +333,64 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, billingRepo.lastCmd.APIKeyQuotaCost)
 	require.Zero(t, billingRepo.lastCmd.APIKeyRateLimitCost)
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_DoesNotRewriteAtomicallyPersistedUsageLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true, UsageLogID: 4321}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_atomic_usage_log",
+			Usage:     OpenAIUsage{InputTokens: 10, OutputTokens: 5},
+			Model:     "gpt-5.1",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 1000, Group: &Group{RateMultiplier: 1}},
+		User:    &User{ID: 2000},
+		Account: &Account{ID: 3000, Type: AccountTypeAPIKey},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, billingRepo.calls)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.NotNil(t, billingRepo.lastCmd.UsageLog)
+	require.Equal(t, int64(4321), billingRepo.lastCmd.UsageLog.ID)
+	require.Zero(t, usageRepo.calls)
+}
+
+func TestGatewayServiceRecordUsage_DoesNotRewriteAtomicallyPersistedUsageLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true, UsageLogID: 4321}}
+	cfg := &config.Config{}
+	cfg.Default.RateMultiplier = 1.1
+	svc := &GatewayService{
+		usageLogRepo:        usageRepo,
+		usageBillingRepo:    billingRepo,
+		cfg:                 cfg,
+		billingService:      NewBillingService(cfg, nil),
+		billingCacheService: &BillingCacheService{},
+		deferredService:     &DeferredService{},
+	}
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_atomic_usage_log",
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 501},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701, Type: AccountTypeAPIKey},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, billingRepo.calls)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.NotNil(t, billingRepo.lastCmd.UsageLog)
+	require.Equal(t, int64(4321), billingRepo.lastCmd.UsageLog.ID)
+	require.Zero(t, usageRepo.calls)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_ConsumesDistributionChannelUsage(t *testing.T) {
@@ -654,7 +715,7 @@ func TestOpenAIGatewayServiceRecordUsage_DuplicateUsageLogSkipsBilling(t *testin
 
 	require.NoError(t, err)
 	require.Equal(t, 1, billingRepo.calls)
-	require.Equal(t, 1, usageRepo.calls)
+	require.Equal(t, 0, usageRepo.calls, "a duplicate billing event must not trigger the legacy usage-log writer")
 	require.Equal(t, 0, userRepo.deductCalls)
 	require.Equal(t, 0, subRepo.incrementCalls)
 }
@@ -688,7 +749,7 @@ func TestOpenAIGatewayServiceRecordUsage_DuplicateBillingKeySkipsBillingWithRepo
 
 	require.NoError(t, err)
 	require.Equal(t, 1, billingRepo.calls)
-	require.Equal(t, 1, usageRepo.calls)
+	require.Equal(t, 0, usageRepo.calls, "a duplicate billing event must not trigger the legacy usage-log writer")
 	require.Equal(t, 0, userRepo.deductCalls)
 	require.Equal(t, 0, subRepo.incrementCalls)
 	require.Equal(t, 0, quotaSvc.quotaCalls)

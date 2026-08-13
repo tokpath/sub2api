@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,10 @@ type DistributionCommissionInput struct {
 	MemberID              int64
 	UserID                int64
 	UsageLogID            *int64
+	BillingUsageEntryID   *int64
+	RequestID             string
+	APIKeyID              *int64
+	DedupKey              string
 	CommissionType        string
 	BaseAmount            float64
 	Rate                  float64
@@ -112,6 +117,10 @@ type distributionCommissionAccrual interface {
 	AccrueForUsageLog(ctx context.Context, usageLog *UsageLog) (*DistributionCommissionLedger, error)
 }
 
+type distributionUsageAccountingPlanner interface {
+	PrepareUsageAccounting(ctx context.Context, usageLog *UsageLog) (*DistributionUsageAccountingPlan, error)
+}
+
 func NewDistributionCommissionService(
 	attributionRepo DistributionAttributionLookupRepository,
 	memberRepo DistributionMemberLookupRepository,
@@ -144,6 +153,176 @@ func (s *DistributionCommissionService) SetWalletRepository(walletRepo Distribut
 		return
 	}
 	s.walletRepo = walletRepo
+}
+
+// PrepareUsageAccounting resolves the complete distribution effect for one
+// usage request without mutating financial state. The returned snapshot is
+// applied by UsageBillingRepository in the same transaction as the user charge.
+func (s *DistributionCommissionService) PrepareUsageAccounting(ctx context.Context, usageLog *UsageLog) (*DistributionUsageAccountingPlan, error) {
+	if s == nil || s.attributionRepo == nil || s.organizationRepo == nil || usageLog == nil || usageLog.UserID <= 0 {
+		return nil, nil
+	}
+
+	attribution, err := s.attributionRepo.GetByUserID(ctx, usageLog.UserID)
+	if err != nil {
+		if errors.Is(err, ErrDistributionAttributionNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if attribution == nil || attribution.ChannelOrgID <= 0 {
+		return nil, nil
+	}
+
+	org, err := s.organizationRepo.GetByID(ctx, attribution.ChannelOrgID)
+	if err != nil {
+		return nil, err
+	}
+	if org == nil {
+		return nil, ErrInvalidDistributionOrganization
+	}
+	if shouldAffectDistributionWallet(org) && !strings.EqualFold(strings.TrimSpace(org.Status), "active") {
+		return nil, ErrDistributionChannelSuspended
+	}
+
+	baseAmount := distributionCommissionBaseAmount(usageLog)
+	plan := &DistributionUsageAccountingPlan{
+		ChannelOrgID:      attribution.ChannelOrgID,
+		ConsumptionAmount: baseAmount,
+		ConsumptionLimit:  distributionOrganizationConfigFloat(org.Config, "consumption_limit", "credit_limit", "usage_limit"),
+	}
+	if baseAmount <= 0 || attribution.ReferrerMemberID == nil || *attribution.ReferrerMemberID <= 0 || s.memberRepo == nil || s.commissionRepo == nil {
+		return plan, nil
+	}
+
+	member, err := s.memberRepo.GetByID(ctx, *attribution.ReferrerMemberID)
+	if err != nil {
+		return nil, err
+	}
+	if member == nil || member.ChannelOrgID != attribution.ChannelOrgID || !strings.EqualFold(strings.TrimSpace(member.Status), "active") {
+		return plan, nil
+	}
+
+	rate := member.CommissionRate
+	if strings.EqualFold(strings.TrimSpace(member.RoleType), "kol2") && s.settingService != nil {
+		if globalRate := s.settingService.GetDistributionKol2Rate(ctx); globalRate > 0 {
+			rate = globalRate / 100
+		}
+	}
+	if cap := resolveDistributionDirectCommissionRateCap(org); cap > 0 && rate > cap {
+		rate = cap
+	}
+	if rate <= 0 {
+		return plan, nil
+	}
+
+	drafts := []distributionCommissionDraft{{
+		MemberID:         member.MemberID,
+		CommissionType:   "direct",
+		BaseAmount:       baseAmount,
+		Rate:             rate,
+		Amount:           baseAmount * rate,
+		SettlementMethod: resolveDistributionCommissionSettlementMethod(org),
+	}}
+	if managementDraft, ok := s.buildManagementRewardDraft(ctx, org, member, baseAmount, rate); ok {
+		drafts = append(drafts, managementDraft)
+	}
+	if channelDraft, ok := s.buildChannelCommissionDraft(ctx, org, member, baseAmount); ok {
+		drafts = append(drafts, channelDraft)
+	}
+	if err := s.applyMemberCommissionTotalCap(ctx, attribution.ChannelOrgID, drafts, org); err != nil {
+		return nil, err
+	}
+	if capRatio := s.resolveCommissionUpperRatio(ctx, org); capRatio > 0 {
+		applyDistributionCommissionCap(drafts, baseAmount*capRatio)
+	}
+	if err := s.applyUserCommissionTotalCap(ctx, attribution.ChannelOrgID, usageLog.UserID, drafts, org); err != nil {
+		return nil, err
+	}
+
+	status := "available"
+	var frozenUntil *time.Time
+	if freezeDuration := s.resolveFreezeDuration(ctx, attribution.ChannelOrgID); freezeDuration > 0 {
+		status = "frozen"
+		t := time.Now().UTC().Add(freezeDuration)
+		frozenUntil = &t
+	}
+	for _, draft := range drafts {
+		if draft.Amount <= 0 || draft.Rate <= 0 {
+			continue
+		}
+		plan.Commissions = append(plan.Commissions, DistributionCommissionInput{
+			ChannelOrgID:     attribution.ChannelOrgID,
+			MemberID:         draft.MemberID,
+			UserID:           usageLog.UserID,
+			CommissionType:   draft.CommissionType,
+			BaseAmount:       draft.BaseAmount,
+			Rate:             draft.Rate,
+			Amount:           draft.Amount,
+			Status:           status,
+			SettlementMethod: draft.SettlementMethod,
+			FrozenUntil:      frozenUntil,
+		})
+	}
+
+	if teamReward := s.prepareTeamRewardCommission(ctx, org, usageLog, baseAmount, frozenUntil); teamReward != nil {
+		plan.Commissions = append(plan.Commissions, *teamReward)
+	}
+	return plan, nil
+}
+
+func (s *DistributionCommissionService) prepareTeamRewardCommission(
+	ctx context.Context,
+	org *DistributionOrganization,
+	usageLog *UsageLog,
+	currentConsumption float64,
+	frozenUntil *time.Time,
+) *DistributionCommissionInput {
+	if s == nil || org == nil || usageLog == nil || s.consumptionRepo == nil || s.memberRepo == nil {
+		return nil
+	}
+	rate := distributionOrganizationConfigFloat(org.Config, "team_reward_rate")
+	threshold := distributionOrganizationConfigFloat(org.Config, "team_reward_threshold")
+	if rate <= 0 || threshold <= 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if s.historyRepo != nil {
+		paid, err := s.historyRepo.HasCommissionTypeSince(ctx, org.ID, "team_reward", monthStart)
+		if err != nil || paid {
+			return nil
+		}
+	}
+	monthlyTotal, err := s.consumptionRepo.GetMonthlyChannelConsumption(ctx, org.ID, monthStart)
+	if err != nil {
+		return nil
+	}
+	monthlyTotal += currentConsumption
+	if monthlyTotal < threshold {
+		return nil
+	}
+	manager, err := s.memberRepo.GetByChannelOrgIDAndRole(ctx, org.ID, "manager")
+	if err != nil || manager == nil || manager.MemberID <= 0 || manager.UserID <= 0 {
+		return nil
+	}
+	amount := monthlyTotal * rate
+	if amount <= 0 {
+		return nil
+	}
+	return &DistributionCommissionInput{
+		ChannelOrgID:     org.ID,
+		MemberID:         manager.MemberID,
+		UserID:           manager.UserID,
+		CommissionType:   "team_reward",
+		BaseAmount:       monthlyTotal,
+		Rate:             rate,
+		Amount:           amount,
+		Status:           "available",
+		SettlementMethod: "manual",
+		FrozenUntil:      frozenUntil,
+		DedupKey:         fmt.Sprintf("team-reward:%d:%s", org.ID, monthStart.Format("2006-01")),
+	}
 }
 
 func (s *DistributionCommissionService) AccrueForUsageLog(ctx context.Context, usageLog *UsageLog) (*DistributionCommissionLedger, error) {
@@ -725,4 +904,20 @@ func recordDistributionCommissionBestEffort(ctx context.Context, svc distributio
 		}
 		logger.LegacyPrintf(logKey, "Accrue distribution commission failed: %v", err)
 	}
+}
+
+func prepareDistributionUsageAccounting(
+	ctx context.Context,
+	svc distributionCommissionAccrual,
+	usageLog *UsageLog,
+) (*DistributionUsageAccountingPlan, bool, error) {
+	planner, ok := svc.(distributionUsageAccountingPlanner)
+	if !ok || planner == nil {
+		return nil, false, nil
+	}
+	plan, err := planner.PrepareUsageAccounting(ctx, usageLog)
+	if err != nil {
+		return nil, true, err
+	}
+	return plan, true, nil
 }

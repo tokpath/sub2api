@@ -269,7 +269,7 @@ func TestEmailOAuthStartPreservesPromoCodeInPendingSession(t *testing.T) {
 	require.Equal(t, "WELCOME2024", pendingOAuthPromoCode(session))
 }
 
-func TestCompleteEmailOAuthRegistrationUsesAffiliateCodeFromPendingSession(t *testing.T) {
+func TestCompleteEmailOAuthRegistrationDoesNotBindLegacyAffiliate(t *testing.T) {
 	affiliateRepo := newOAuthEmailAffiliateRepoStub(map[string]int64{"AFF456": 2002})
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		invitationEnabled: true,
@@ -333,7 +333,8 @@ func TestCompleteEmailOAuthRegistrationUsesAffiliateCodeFromPendingSession(t *te
 	tamperedCount, err := client.User.Query().Where(dbuser.EmailEQ("tampered@example.com")).Count(ctx)
 	require.NoError(t, err)
 	require.Zero(t, tamperedCount)
-	require.Equal(t, []oauthEmailAffiliateBindCall{{userID: user.ID, inviterID: 2002}}, affiliateRepo.bindCalls)
+	require.Empty(t, affiliateRepo.ensureUserIDs)
+	require.Empty(t, affiliateRepo.bindCalls)
 	storedInvitation, err := client.RedeemCode.Query().Where(redeemcode.IDEQ(invitation.ID)).Only(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, storedInvitation.UsedBy)

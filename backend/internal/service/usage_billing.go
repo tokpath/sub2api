@@ -39,6 +39,13 @@ type UsageBillingCommand struct {
 	APIKeyQuotaCost     float64
 	APIKeyRateLimitCost float64
 	AccountQuotaCost    float64
+
+	// UsageLog and DistributionAccounting are persisted together with the core
+	// user charge. They intentionally live on the command so one request claim
+	// controls every financial effect derived from the same usage event.
+	UsageLog               *UsageLog
+	DistributionAccounting *DistributionUsageAccountingPlan
+	SkipCoreBilling        bool
 }
 
 func (c *UsageBillingCommand) Normalize() {
@@ -113,10 +120,35 @@ type AccountQuotaState struct {
 
 type UsageBillingApplyResult struct {
 	Applied              bool
+	UsageLogID           int64
+	BillingUsageEntryID  int64
 	APIKeyQuotaExhausted bool
 	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
 	BalanceOverdrafted   bool               // true when the sufficient-balance guard missed and debt was still recorded
 	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+}
+
+// DistributionUsageAccountingPlan is a snapshot of the distribution effects
+// calculated for one usage request. Repository.Apply consumes the snapshot in
+// the same transaction as the user charge and usage log.
+type DistributionUsageAccountingPlan struct {
+	ChannelOrgID      int64
+	ConsumptionAmount float64
+	ConsumptionLimit  float64
+	Commissions       []DistributionCommissionInput
+}
+
+func (p *DistributionUsageAccountingPlan) ReservedCommissionAmount() float64 {
+	if p == nil {
+		return 0
+	}
+	total := 0.0
+	for _, commission := range p.Commissions {
+		if commission.Amount > 0 && requiresDistributionWalletReserve(commission.SettlementMethod) {
+			total += commission.Amount
+		}
+	}
+	return total
 }
 
 // BatchImageBalanceHoldCommand describes an idempotent balance hold operation.

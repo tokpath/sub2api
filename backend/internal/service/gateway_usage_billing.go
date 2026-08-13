@@ -65,16 +65,18 @@ type usageLogBestEffortWriter interface {
 
 // postUsageBillingParams 统一扣费所需的参数
 type postUsageBillingParams struct {
-	Cost                  *CostBreakdown
-	User                  *User
-	APIKey                *APIKey
-	Account               *Account
-	Subscription          *UserSubscription
-	RequestPayloadHash    string
-	IsSubscriptionBill    bool
-	AccountRateMultiplier float64
-	APIKeyService         APIKeyQuotaUpdater
-	Platform              string // 来自 APIKey 关联 Group 的平台标识
+	Cost                   *CostBreakdown
+	User                   *User
+	APIKey                 *APIKey
+	Account                *Account
+	Subscription           *UserSubscription
+	RequestPayloadHash     string
+	IsSubscriptionBill     bool
+	AccountRateMultiplier  float64
+	APIKeyService          APIKeyQuotaUpdater
+	Platform               string // 来自 APIKey 关联 Group 的平台标识
+	SkipCoreBilling        bool
+	DistributionAccounting *DistributionUsageAccountingPlan
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -119,6 +121,12 @@ func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
 func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) {
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
+	if p.SkipCoreBilling {
+		if p.Account != nil && deps.deferredService != nil {
+			deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
+		}
+		return
+	}
 
 	cost := p.Cost
 
@@ -223,12 +231,15 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	}
 
 	cmd := &UsageBillingCommand{
-		RequestID:          requestID,
-		APIKeyID:           p.APIKey.ID,
-		UserID:             p.User.ID,
-		AccountID:          p.Account.ID,
-		AccountType:        p.Account.Type,
-		RequestPayloadHash: strings.TrimSpace(p.RequestPayloadHash),
+		RequestID:              requestID,
+		APIKeyID:               p.APIKey.ID,
+		UserID:                 p.User.ID,
+		AccountID:              p.Account.ID,
+		AccountType:            p.Account.Type,
+		RequestPayloadHash:     strings.TrimSpace(p.RequestPayloadHash),
+		UsageLog:               usageLog,
+		DistributionAccounting: p.DistributionAccounting,
+		SkipCoreBilling:        p.SkipCoreBilling,
 	}
 	if usageLog != nil {
 		cmd.Model = usageLog.Model
@@ -310,6 +321,12 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
 	if p == nil || p.Cost == nil || deps == nil {
+		return
+	}
+	if p.SkipCoreBilling {
+		if p.Account != nil && deps.deferredService != nil {
+			deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
+		}
 		return
 	}
 
@@ -715,13 +732,12 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		)
 	}
 
-	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
-		recordDistributionCommissionBestEffort(ctx, s.distributionCommissionService, usageLog, "service.gateway")
-		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
-		s.deferredService.ScheduleLastUsedUpdate(account.ID)
-		return nil
+	distributionAccounting, distributionPlanned, err := prepareDistributionUsageAccounting(ctx, s.distributionCommissionService, usageLog)
+	if err != nil {
+		return err
 	}
+	useAtomicDistribution := distributionPlanned && s.usageBillingRepo != nil
+	simpleMode := s.cfg != nil && s.cfg.RunMode == config.RunModeSimple
 
 	// 配额平台由 handler 在请求 ctx 内经 QuotaPlatform() 算定并通过 input 传入；
 	// 后扣运行在 worker 池的 background ctx 上，无法再从 ctx 取 ForcePlatform。
@@ -731,29 +747,41 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		quotaPlatform = PlatformFromAPIKey(apiKey)
 	}
 	requestID := usageLog.RequestID
-	_, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
-		Cost:                  cost,
-		User:                  user,
-		APIKey:                apiKey,
-		Account:               account,
-		Subscription:          subscription,
-		RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
-		IsSubscriptionBill:    isSubscriptionBilling,
-		AccountRateMultiplier: accountRateMultiplier,
-		APIKeyService:         input.APIKeyService,
-		Platform:              quotaPlatform,
+	applied, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
+		Cost:                   cost,
+		User:                   user,
+		APIKey:                 apiKey,
+		Account:                account,
+		Subscription:           subscription,
+		RequestPayloadHash:     resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
+		IsSubscriptionBill:     isSubscriptionBilling,
+		AccountRateMultiplier:  accountRateMultiplier,
+		APIKeyService:          input.APIKeyService,
+		Platform:               quotaPlatform,
+		SkipCoreBilling:        simpleMode,
+		DistributionAccounting: distributionAccounting,
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {
 		return billingErr
 	}
-	if s.distributionChannelBilling != nil {
-		if err := s.distributionChannelBilling.ConsumeUsage(ctx, usageLog); err != nil {
-			return err
-		}
+	if !applied {
+		return nil
 	}
-	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
-	recordDistributionCommissionBestEffort(ctx, s.distributionCommissionService, usageLog, "service.gateway")
+	if !useAtomicDistribution {
+		if s.distributionChannelBilling != nil {
+			if err := s.distributionChannelBilling.ConsumeUsage(ctx, usageLog); err != nil {
+				return err
+			}
+		}
+		recordDistributionCommissionBestEffort(ctx, s.distributionCommissionService, usageLog, "service.gateway")
+	}
+	if usageLog.ID <= 0 {
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	}
+	if simpleMode {
+		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (core billing skipped): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
+	}
 
 	return nil
 }
